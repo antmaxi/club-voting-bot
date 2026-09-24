@@ -43,6 +43,10 @@ disable_error_code = ["union-attr", "index"]
 module = "tests.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = "cursor_sdk"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

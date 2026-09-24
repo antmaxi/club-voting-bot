@@ -13,13 +13,13 @@ flowchart LR
   SQ[(SQLite<br/>books, votes, settings, meetings, add_drafts)]
   PK[(PicklePersistence<br/>conversations, bot_data)]
   LOG[(logs/bookclub_bot.log)]
-  LLM[OpenAI-compatible LLM<br/>optional, /add suggestions]
+  LLM[LLM for /add suggestions<br/>chat API or Cursor]
 
   TG <-->|long polling| BOT
   BOT --> SQ
   BOT --> PK
   BOT --> LOG
-  BOT -.->|if LLM_API_KEY set| LLM
+  BOT -.->|if a provider is configured| LLM
 ```
 
 Locally: `python bookclub_bot.py`. In production: `docker compose up` binds `./data` (DB + persistence) and `./logs`.

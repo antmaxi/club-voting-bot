@@ -89,6 +89,11 @@ class TestNormalizeSuggestions(unittest.TestCase):
 
 
 class TestSuggestBookFields(unittest.TestCase):
+    def setUp(self):
+        self._provider = patch.object(cfg, "LLM_PROVIDER", "chat")
+        self._provider.start()
+        self.addCleanup(self._provider.stop)
+
     def test_not_configured(self):
         with patch.object(cfg, "LLM_API_KEY", ""):
             fields, error = llm.suggest_book_fields("Title", lang="en")
@@ -326,6 +331,11 @@ class TestSuggestReviewLink(unittest.TestCase):
 
 
 class TestChatCompletion(unittest.TestCase):
+    def setUp(self):
+        self._provider = patch.object(cfg, "LLM_PROVIDER", "chat")
+        self._provider.start()
+        self.addCleanup(self._provider.stop)
+
     def _response(self, payload: dict) -> MagicMock:
         resp = MagicMock()
         resp.read.return_value = json.dumps(payload).encode("utf-8")
@@ -480,6 +490,7 @@ class TestResolveLlmSettings(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
+                "LLM_PROVIDER": "",
                 "LLM_API_KEY": "xai-secret",
                 "XAI_API_KEY": "",
                 "LLM_API_BASE": "",
@@ -515,6 +526,7 @@ class TestResolveLlmSettings(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
+                "LLM_PROVIDER": "",
                 "LLM_API_KEY": "xai-secret",
                 "XAI_API_KEY": "",
                 "LLM_API_BASE": "https://api.openai.com/v1",
@@ -575,6 +587,7 @@ class TestLlmErrorKinds(unittest.TestCase):
     def test_empty_reply_kind(self):
         payload = {"choices": [{"message": {"content": ""}}]}
         with (
+            patch.object(cfg, "LLM_PROVIDER", "chat"),
             patch.object(cfg, "LLM_API_KEY", "sk-test"),
             patch.object(cfg, "LLM_API_BASE", "https://example.test/v1"),
             patch.object(cfg, "LLM_MODEL", "test-model"),
@@ -586,3 +599,210 @@ class TestLlmErrorKinds(unittest.TestCase):
         ):
             llm.chat_completion([{"role": "user", "content": "hi"}])
         self.assertEqual(caught.exception.kind, "empty_reply")
+
+
+class TestCursorProvider(unittest.TestCase):
+    def test_chat_provider_aliases(self):
+        for raw in ("", "openai", "chat", "xai"):
+            with (
+                self.subTest(raw=raw),
+                patch.dict(os.environ, {"LLM_PROVIDER": raw}, clear=False),
+            ):
+                self.assertEqual(cfg.resolve_llm_provider(), "chat")
+
+    def test_unknown_provider_falls_back_to_chat(self):
+        with (
+            patch.dict(os.environ, {"LLM_PROVIDER": "nope"}, clear=False),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(cfg.resolve_llm_provider(), "chat")
+        self.assertTrue(
+            any("unknown LLM_PROVIDER" in str(call) for call in printed.call_args_list)
+        )
+
+    def test_cursor_default_model(self):
+        with patch.dict(os.environ, {"LLM_MODEL": ""}, clear=False):
+            self.assertEqual(cfg.resolve_llm_model(provider="cursor"), "composer-2.5")
+
+    def test_cursor_replaces_leftover_chat_models(self):
+        for leftover in ("gpt-4o-mini", "grok-4.6"):
+            with (
+                self.subTest(leftover=leftover),
+                patch.dict(os.environ, {"LLM_MODEL": leftover}, clear=False),
+            ):
+                self.assertEqual(
+                    cfg.resolve_llm_model(provider="cursor"), "composer-2.5"
+                )
+
+    def test_cursor_keeps_explicit_model(self):
+        with patch.dict(os.environ, {"LLM_MODEL": "composer-2.5-fast"}, clear=False):
+            self.assertEqual(
+                cfg.resolve_llm_model(provider="cursor"), "composer-2.5-fast"
+            )
+
+    def test_llm_configured_cursor_uses_cursor_key_only(self):
+        with (
+            patch.object(cfg, "LLM_PROVIDER", "cursor"),
+            patch.object(cfg, "CURSOR_API_KEY", ""),
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+        ):
+            self.assertFalse(cfg.llm_configured())
+        with (
+            patch.object(cfg, "LLM_PROVIDER", "cursor"),
+            patch.object(cfg, "CURSOR_API_KEY", "crsr_x"),
+            patch.object(cfg, "LLM_API_KEY", ""),
+        ):
+            self.assertTrue(cfg.llm_configured())
+
+    def test_provider_origin_is_cursor(self):
+        with patch.object(cfg, "LLM_PROVIDER", "cursor"):
+            self.assertEqual(llm._provider_origin(), "cursor")
+
+    def test_redacts_configured_cursor_key(self):
+        secret = "cursor-secret-without-prefix"
+        with patch.object(cfg, "CURSOR_API_KEY", secret):
+            text = llm.redact_llm_secrets(f"key={secret}")
+        self.assertNotIn(secret, text)
+        self.assertIn("[redacted]", text)
+
+
+class TestCursorCompletion(unittest.TestCase):
+    def _install_sdk(self, prompt):
+        class AgentOptions:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        class LocalAgentOptions:
+            def __init__(self, *, cwd):
+                self.cwd = cwd
+
+        class CursorAgentError(Exception):
+            def __init__(self, message, is_retryable=False):
+                super().__init__(message)
+                self.message = message
+                self.is_retryable = is_retryable
+
+        class Agent:
+            @staticmethod
+            def prompt(message, options):
+                return prompt(message, options)
+
+        patcher = patch.object(
+            llm,
+            "_cursor_sdk",
+            return_value=(Agent, AgentOptions, CursorAgentError, LocalAgentOptions),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return CursorAgentError
+
+    def _configured(self, api_key="crsr_x"):
+        return (
+            patch.object(cfg, "LLM_PROVIDER", "cursor"),
+            patch.object(cfg, "CURSOR_API_KEY", api_key),
+            patch.object(cfg, "LLM_MODEL", "composer-2.5"),
+        )
+
+    def test_concatenates_prompt_and_disables_tools(self):
+        captured = {}
+
+        class FakeResult:
+            status = "finished"
+            result = "  hi  "
+            id = "run-1"
+
+        def prompt(message, options):
+            captured["message"] = message
+            captured["options"] = options
+            self.assertTrue(os.path.isdir(options.local.cwd))
+            return FakeResult()
+
+        self._install_sdk(prompt)
+        provider, key, model = self._configured()
+        with provider, key, model:
+            text = llm.chat_completion(
+                [
+                    {"role": "system", "content": "  sys  "},
+                    {"role": "user", "content": "  usr  "},
+                ]
+            )
+        self.assertEqual(text, "hi")
+        self.assertEqual(captured["message"], "sys\n\nusr")
+        self.assertEqual(captured["options"].api_key, "crsr_x")
+        self.assertEqual(captured["options"].model, "composer-2.5")
+        self.assertEqual(captured["options"].tools, [])
+
+    def test_missing_key_raises_before_sdk(self):
+        provider, key, model = self._configured(api_key="")
+        with (
+            provider,
+            key,
+            model,
+            patch.object(llm, "_cursor_sdk", side_effect=AssertionError("sdk")),
+            self.assertRaises(llm.LlmRequestError) as caught,
+        ):
+            llm.chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.kind, "auth")
+        self.assertIn("API key is not set", str(caught.exception))
+
+    def test_missing_sdk_raises(self):
+        import sys
+
+        with (
+            patch.dict(sys.modules, {"cursor_sdk": None}),
+            self.assertRaises(llm.LlmRequestError) as caught,
+        ):
+            llm._cursor_sdk()
+        self.assertEqual(caught.exception.kind, "request")
+        self.assertIn("cursor-sdk", str(caught.exception))
+
+    def test_run_error_raises(self):
+        class FakeResult:
+            status = "error"
+            result = ""
+            id = "run-9"
+
+        self._install_sdk(lambda message, options: FakeResult())
+        provider, key, model = self._configured()
+        with provider, key, model, self.assertRaises(llm.LlmRequestError) as caught:
+            llm.chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.kind, "request")
+        self.assertIn("Cursor run error (run-9)", str(caught.exception))
+
+    def test_empty_response_raises(self):
+        class FakeResult:
+            status = "finished"
+            result = "  "
+            id = "run-1"
+
+        self._install_sdk(lambda message, options: FakeResult())
+        provider, key, model = self._configured()
+        with provider, key, model, self.assertRaises(llm.LlmRequestError) as caught:
+            llm.chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.kind, "empty_reply")
+
+    def test_startup_error_is_auth_when_key_is_rejected(self):
+        holder: dict = {}
+
+        def boom(message, options):
+            raise holder["err"]("invalid key")
+
+        holder["err"] = self._install_sdk(boom)
+        provider, key, model = self._configured()
+        with provider, key, model, self.assertRaises(llm.LlmRequestError) as caught:
+            llm.chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.kind, "auth")
+        self.assertIn("Cursor: invalid key", str(caught.exception))
+
+    def test_startup_error_without_auth_is_request(self):
+        holder: dict = {}
+
+        def boom(message, options):
+            raise holder["err"]("bridge failed")
+
+        holder["err"] = self._install_sdk(boom)
+        provider, key, model = self._configured()
+        with provider, key, model, self.assertRaises(llm.LlmRequestError) as caught:
+            llm.chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.kind, "request")
+        self.assertIn("Cursor: bridge failed", str(caught.exception))

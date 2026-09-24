@@ -59,6 +59,9 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot.ALLOWED_CHAT_ID = None
         self._orig_llm_key = cfg.LLM_API_KEY
         cfg.LLM_API_KEY = ""
+        # Chat completions stay the default even if the shell has LLM_PROVIDER=cursor.
+        self._orig_llm_provider = cfg.LLM_PROVIDER
+        cfg.LLM_PROVIDER = "chat"
         self._orig_activity_path = cfg.ACTIVITY_PATH
         cfg.ACTIVITY_PATH = f"{self.DB_FILE}.activity.json"
 
@@ -91,6 +94,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         cfg.ALLOWED_CHAT_ID = self._orig_chat_id
         bot.ALLOWED_CHAT_ID = self._orig_chat_id
         cfg.LLM_API_KEY = self._orig_llm_key
+        cfg.LLM_PROVIDER = self._orig_llm_provider
         cfg.ACTIVITY_PATH = self._orig_activity_path
         for path in (
             self.DB_FILE,

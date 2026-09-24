@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import urllib.error
 import urllib.request
 from typing import Any
@@ -228,6 +229,98 @@ def suggest_book_fields_from_page(
 
 
 def chat_completion(messages: list[dict[str, str]]) -> str:
+    """Return assistant text from the configured provider."""
+    if config.LLM_PROVIDER == "cursor":
+        return _cursor_completion(messages)
+    return _chat_completions(messages)
+
+
+def _cursor_sdk() -> tuple[Any, Any, Any, Any]:
+    """Lazy import so chat-completions deploys do not need cursor-sdk."""
+    try:
+        from cursor_sdk import (
+            Agent,
+            AgentOptions,
+            CursorAgentError,
+            LocalAgentOptions,
+        )
+    except ImportError as e:
+        raise LlmRequestError(
+            "Cursor provider requires the cursor-sdk package. "
+            "Install with: pip install -r requirements-cursor.txt",
+            kind="request",
+        ) from e
+    return Agent, AgentOptions, CursorAgentError, LocalAgentOptions
+
+
+def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
+    """Join chat messages into one prompt. The SDK has no system role."""
+    parts = [(message.get("content") or "").strip() for message in messages]
+    return "\n\n".join(part for part in parts if part)
+
+
+def _cursor_error_kind(message: str) -> str:
+    text = message.casefold()
+    if any(
+        token in text
+        for token in (
+            "api key",
+            "invalid key",
+            "unauthorized",
+            "authentication",
+            "not authenticated",
+        )
+    ):
+        return "auth"
+    if "model" in text and any(
+        token in text for token in ("not found", "does not exist", "unknown", "invalid")
+    ):
+        return "bad_model"
+    return "request"
+
+
+def _cursor_completion(messages: list[dict[str, str]]) -> str:
+    """One-shot local Cursor agent billed to the subscription, not a chat API.
+
+    ``tools=[]`` and a temp cwd keep the agent from editing this repo.
+    ``Agent.prompt`` disposes the client.
+    """
+    if not config.CURSOR_API_KEY:
+        raise LlmRequestError("Cursor API key is not set", kind="auth")
+    Agent, AgentOptions, CursorAgentError, LocalAgentOptions = _cursor_sdk()
+    prompt = _messages_to_prompt(messages)
+
+    def run(cwd: str) -> Any:
+        try:
+            return Agent.prompt(
+                prompt,
+                AgentOptions(
+                    api_key=config.CURSOR_API_KEY,
+                    model=config.LLM_MODEL,
+                    tools=[],
+                    local=LocalAgentOptions(cwd=cwd),
+                ),
+            )
+        except CursorAgentError as e:
+            message = str(getattr(e, "message", None) or e)
+            raise LlmRequestError(
+                f"Cursor: {message}", kind=_cursor_error_kind(message)
+            ) from e
+
+    with tempfile.TemporaryDirectory(prefix="bookclub-cursor-") as cwd:
+        result = run(cwd)
+    status = str(getattr(result, "status", "") or "")
+    if status != "finished":
+        run_id = str(getattr(result, "id", "") or "")
+        suffix = f" ({run_id})" if run_id else ""
+        raise LlmRequestError(f"Cursor run {status}{suffix}", kind="request")
+    text = str(getattr(result, "result", None) or "").strip()
+    if not text:
+        raise LlmRequestError("Cursor returned no text", kind="empty_reply")
+    return text
+
+
+def _chat_completions(messages: list[dict[str, str]]) -> str:
     """POST /chat/completions and return the assistant message content."""
     url = f"{config.LLM_API_BASE.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
@@ -287,6 +380,8 @@ def redact_llm_secrets(text: str) -> str:
     redacted = str(text)
     if config.LLM_API_KEY:
         redacted = redacted.replace(config.LLM_API_KEY, "[redacted]")
+    if config.CURSOR_API_KEY:
+        redacted = redacted.replace(config.CURSOR_API_KEY, "[redacted]")
     redacted = _SECRET_RE.sub("[redacted]", redacted)
     redacted = _BEARER_RE.sub(r"\1[redacted]", redacted)
     redacted = _QUERY_SECRET_RE.sub(r"\1[redacted]", redacted)
@@ -294,6 +389,8 @@ def redact_llm_secrets(text: str) -> str:
 
 
 def _provider_origin() -> str:
+    if config.LLM_PROVIDER == "cursor":
+        return "cursor"
     parsed = urlparse(config.LLM_API_BASE)
     return (
         f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else "[invalid provider]"

@@ -12,11 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+# Copy the requirements file into the container.
+# cursor-sdk is optional for a local venv; the image always includes it so
+# LLM_PROVIDER=cursor works without a custom build. The local agent runtime
+# is the bundled cursor-sdk-bridge binary, not the Cursor IDE.
+COPY requirements.txt requirements-cursor.txt .
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-cursor.txt \
+    && python -c "from cursor_sdk import Agent, AgentOptions, CursorAgentError, LocalAgentOptions" \
+    && cursor-sdk-bridge --help >/dev/null
 
 # Copy the application code into the container
 COPY --chown=10001:10001 bookclub/ ./bookclub/

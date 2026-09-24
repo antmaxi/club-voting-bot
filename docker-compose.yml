@@ -11,6 +11,9 @@ services:
       - DB_PATH=/app/data/bookclub.db
       - PERSISTENCE_PATH=/app/data/bot_persistence
       - ACTIVITY_PATH=/app/data/last_activity.json
+      # Read-only root; /tmp is the writable tmpfs. The Cursor bridge stores
+      # local run state under HOME, and the agent cwd is a temp dir there too.
+      - HOME=/tmp
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

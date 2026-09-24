@@ -511,7 +511,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_request": "request failed",
         "add_ai_no_llm": (
             "⚠️ No LLM API key configured (LLM_API_KEY / XAI_API_KEY / "
-            "OPENAI_API_KEY). Fill in the fields yourself."
+            "OPENAI_API_KEY, or LLM_PROVIDER=cursor with CURSOR_API_KEY). "
+            "Fill in the fields yourself."
         ),
         "choose_export": "📤 Choose a {sg} to export as JSON:",
         "export_done": "📤 Copy the JSON below and send it to another bot instance (Import in /adminconsole):\n\n<pre>{payload}</pre>",
@@ -825,7 +826,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_http": "ошибка HTTP",
         "llm_err_request": "сбой запроса",
         "add_ai_no_llm": (
-            "⚠️ Не задан ключ LLM (LLM_API_KEY / XAI_API_KEY / OPENAI_API_KEY). "
+            "⚠️ Не задан ключ LLM (LLM_API_KEY / XAI_API_KEY / OPENAI_API_KEY "
+            "или LLM_PROVIDER=cursor и CURSOR_API_KEY). "
             "Заполните поля вручную."
         ),
         "choose_export": "📤 Выберите {acc} для экспорта в JSON:",
@@ -1149,7 +1151,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_request": "Anfrage fehlgeschlagen",
         "add_ai_no_llm": (
             "⚠️ Kein LLM-API-Schlüssel gesetzt (LLM_API_KEY / XAI_API_KEY / "
-            "OPENAI_API_KEY). Bitte die Felder selbst ausfüllen."
+            "OPENAI_API_KEY, oder LLM_PROVIDER=cursor mit CURSOR_API_KEY). "
+            "Bitte die Felder selbst ausfüllen."
         ),
         "choose_export": "📤 Wähle {acc} zum Export als JSON:",
         "export_done": "📤 JSON kopieren und an eine andere Bot-Instanz senden (Import in /adminconsole):\n\n<pre>{payload}</pre>",

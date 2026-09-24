@@ -183,10 +183,23 @@ def _positive_float_env(name: str, default: float) -> float:
     return value
 
 
-# OpenAI-compatible Chat Completions API for /add field suggestions.
-# Use an explicit provider credential; unrelated IDE credentials are never reused.
+# /add field suggestions: OpenAI-compatible Chat Completions, or a Cursor
+# subscription agent (LLM_PROVIDER=cursor). CURSOR_API_KEY is never reused
+# as the chat-completions bearer.
 _OPENAI_CHAT_BASE = "https://api.openai.com/v1"
 _XAI_CHAT_BASE = "https://api.x.ai/v1"
+_CURSOR_MODEL = "composer-2.5"
+_CHAT_PROVIDERS = frozenset({"", "openai", "chat", "xai"})
+
+
+def resolve_llm_provider() -> str:
+    raw = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if raw in _CHAT_PROVIDERS:
+        return "chat"
+    if raw == "cursor":
+        return "cursor"
+    print(f"Warning: unknown LLM_PROVIDER={raw!r}, using chat completions.")
+    return "chat"
 
 
 def resolve_llm_api_key() -> str:
@@ -224,8 +237,19 @@ def resolve_llm_api_base(key: str = "") -> str:
     return _OPENAI_CHAT_BASE
 
 
-def resolve_llm_model(base: str = "", key: str = "") -> str:
+def resolve_llm_model(base: str = "", key: str = "", provider: str = "") -> str:
     raw = os.environ.get("LLM_MODEL", "").strip()
+    chosen = provider or resolve_llm_provider()
+    if chosen == "cursor":
+        # Leftover chat-completions defaults are not Cursor model ids.
+        if not raw or raw.startswith("gpt-") or raw == "grok-4.6":
+            if raw:
+                print(
+                    f"Warning: LLM_PROVIDER=cursor with LLM_MODEL={raw!r}; "
+                    f"using {_CURSOR_MODEL} instead."
+                )
+            return _CURSOR_MODEL
+        return raw
     host = base or resolve_llm_api_base(key)
     token = key or resolve_llm_api_key()
     looks_xai = "api.x.ai" in host or token.startswith("xai-")
@@ -245,14 +269,18 @@ def resolve_llm_timeout_seconds(model: str = "") -> float:
     return _positive_float_env("LLM_TIMEOUT_SECONDS", default)
 
 
+CURSOR_API_KEY = os.environ.get("CURSOR_API_KEY", "").strip()
+LLM_PROVIDER = resolve_llm_provider()
 LLM_API_KEY = resolve_llm_api_key()
 LLM_API_BASE = resolve_llm_api_base(LLM_API_KEY)
-LLM_MODEL = resolve_llm_model(LLM_API_BASE, LLM_API_KEY)
+LLM_MODEL = resolve_llm_model(LLM_API_BASE, LLM_API_KEY, LLM_PROVIDER)
 LLM_TIMEOUT_SECONDS = resolve_llm_timeout_seconds(LLM_MODEL)
 LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "").strip()
 
 
 def llm_configured() -> bool:
+    if LLM_PROVIDER == "cursor":
+        return bool(CURSOR_API_KEY)
     return bool(LLM_API_KEY)
 
 
