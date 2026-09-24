@@ -23,6 +23,7 @@ from bookclub.review_page import (
     fetch_review_text,
     first_verified_review_url,
     pick_catalog_review_url,
+    prefers_russian_catalog,
 )
 from bookclub.ui import is_valid_url
 
@@ -131,9 +132,10 @@ def suggest_review_link(
 ) -> tuple[str | None, str | None]:
     """Return (verified catalog URL or None, error or None).
 
-    Prefers live catalog search (Wikipedia / Google Books / Open Library)
-    over model-invented IDs. LLM candidates are fetched and dropped when
-    the page text is not about ``title``.
+    Prefers live catalog search (LitRes / Kinopoisk for Russian-language
+    works, Goodreads / IMDb otherwise, then Wikipedia) over model-invented
+    IDs. LLM candidates are fetched and dropped when the page text is not about
+    ``title``.
     """
     club_entity = entity or CLUB_ENTITY
     catalog = pick_catalog_review_url(title, lang=lang, entity=club_entity)
@@ -641,9 +643,13 @@ def _suggestion_messages(
             "fiction": "true for a feature film, false for a documentary",
             "review": (
                 "review_link: omit unless you can give a URL you are sure exists. "
-                "Prefer a Wikipedia article for this title. Never invent catalog "
-                "IDs (IMDb, Kinopoisk, or Letterboxd). A plausible slug is not "
-                "enough — omit if you cannot verify the page"
+                + (
+                    "Prefer a Kinopoisk page for this title; IMDb is a fallback. "
+                    if prefers_russian_catalog(title, lang)
+                    else "Prefer an IMDb page for this title; Kinopoisk is a fallback. "
+                )
+                + "Never invent catalog IDs (IMDb, Kinopoisk, or Letterboxd). "
+                "A plausible slug is not enough — omit if you cannot verify the page"
             ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
@@ -665,9 +671,13 @@ def _suggestion_messages(
             "fiction": "true for fiction, false for non-fiction",
             "review": (
                 "review_link: omit unless you can give a URL you are sure exists. "
-                "Prefer a Wikipedia article for this title. Never invent catalog "
-                "IDs (Goodreads, LitRes numeric paths). A plausible slug is not "
-                "enough — omit if you cannot verify the page"
+                + (
+                    "Prefer a LitRes page for this title; Goodreads is a fallback. "
+                    if prefers_russian_catalog(title, lang)
+                    else "Prefer a Goodreads page for this title; LitRes is a fallback. "
+                )
+                + "Never invent catalog IDs (Goodreads, LitRes numeric paths). "
+                "A plausible slug is not enough — omit if you cannot verify the page"
             ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
@@ -760,16 +770,27 @@ def _review_link_messages(
 ) -> list[dict[str, str]]:
     if entity == "film":
         kind = "film"
-        catalogs = "Wikipedia, IMDb, Kinopoisk, or Letterboxd"
         invented = "IMDb, Kinopoisk, or Letterboxd numeric IDs"
+        if prefers_russian_catalog(title, lang):
+            catalogs = "Kinopoisk (preferred), then IMDb"
+            prefer = "Prefer Kinopoisk. Use IMDb only if Kinopoisk has no page."
+        else:
+            catalogs = "IMDb (preferred), then Kinopoisk"
+            prefer = "Prefer IMDb. Use Kinopoisk only if IMDb has no page."
+    elif prefers_russian_catalog(title, lang):
+        kind = "book"
+        catalogs = "LitRes (preferred), then Goodreads"
+        invented = "Goodreads or LitRes numeric IDs"
+        prefer = "Prefer LitRes. Use Goodreads only if LitRes has no page."
     else:
         kind = "book"
-        catalogs = "Wikipedia, Goodreads, or LitRes"
+        catalogs = "Goodreads (preferred), then LitRes"
         invented = "Goodreads or LitRes numeric IDs"
+        prefer = "Prefer Goodreads. Use LitRes only if Goodreads has no page."
     system = (
         "You suggest catalog URLs only when you are sure the page exists and is "
         "about this title. Reply with a single JSON object and no other text. "
-        "Never invent catalog IDs. A relevant slug is not enough. Prefer Wikipedia. "
+        f"Never invent catalog IDs. A relevant slug is not enough. {prefer} "
         "Omit the field if unsure."
     )
     user = (

@@ -202,7 +202,24 @@ class TestSuggestBookFields(unittest.TestCase):
         user = mocked.call_args[0][0][1]["content"]
         self.assertIn("Goodreads", user)
         self.assertIn("LitRes", user)
+        self.assertIn("Prefer a Goodreads page", user)
         self.assertNotIn("IMDb", user)
+        self.assertNotIn("Wikipedia article", user)
+
+    def test_book_prompt_review_prefers_litres_for_russian(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "Война и мир",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"review"}),
+            )
+        user = mocked.call_args[0][0][1]["content"]
+        self.assertIn("Prefer a LitRes page", user)
+        self.assertIn("Goodreads", user)
 
     def test_film_prompt_review_mentions_catalog_sites(self):
         with (
@@ -218,6 +235,23 @@ class TestSuggestBookFields(unittest.TestCase):
         user = mocked.call_args[0][0][1]["content"]
         self.assertIn("IMDb", user)
         self.assertIn("Kinopoisk", user)
+        self.assertIn("Prefer an IMDb page", user)
+        self.assertNotIn("Wikipedia article", user)
+
+    def test_film_prompt_review_prefers_kinopoisk_for_russian(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "Брат",
+                lang="en",
+                entity="film",
+                enabled_fields=frozenset({"review"}),
+            )
+        user = mocked.call_args[0][0][1]["content"]
+        self.assertIn("Prefer a Kinopoisk page", user)
+        self.assertIn("IMDb", user)
 
     def test_book_prompt_pages_from_review_page(self):
         with (

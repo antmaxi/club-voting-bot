@@ -38,6 +38,7 @@ _STOP_WORDS = {
     "von",
     "im",
 }
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 _FETCH_HOST_SUFFIXES = (
     "wikipedia.org",
     "wikimedia.org",
@@ -47,6 +48,8 @@ _FETCH_HOST_SUFFIXES = (
     "imdb.com",
     "kinopoisk.ru",
     "letterboxd.com",
+    "media-imdb.com",
+    "wikidata.org",
     "books.google.com",
     "books.google.ru",
     "books.google.de",
@@ -171,14 +174,38 @@ def first_verified_review_url(candidates: list[str], title: str) -> str | None:
     return None
 
 
+def prefers_russian_catalog(title: str, lang: str) -> bool:
+    """True when the work looks Russian (Cyrillic title or Russian UI language)."""
+    return lang == "ru" or bool(_CYRILLIC_RE.search(title))
+
+
 def pick_catalog_review_url(title: str, *, lang: str, entity: str) -> str | None:
     """First live catalog URL whose listed title matches ``title``."""
     if entity == "film":
+        if prefers_russian_catalog(title, lang):
+            sources = [
+                lambda: _kinopoisk_hits(title, lang),
+                lambda: _imdb_hits(title),
+                lambda: _wikipedia_source(title, lang, film=True),
+            ]
+        else:
+            sources = [
+                lambda: _imdb_hits(title),
+                lambda: _kinopoisk_hits(title, lang),
+                lambda: _wikipedia_source(title, lang, film=True),
+            ]
+    elif prefers_russian_catalog(title, lang):
         sources = [
-            lambda: _wikipedia_source(title, lang, film=True),
+            lambda: _litres_hits(title),
+            lambda: _goodreads_hits(title),
+            lambda: _wikipedia_source(title, lang, film=False),
+            lambda: _google_books_hits(title),
+            lambda: _openlibrary_hits(title),
         ]
     else:
         sources = [
+            lambda: _goodreads_hits(title),
+            lambda: _litres_hits(title),
             lambda: _wikipedia_source(title, lang, film=False),
             lambda: _google_books_hits(title),
             lambda: _openlibrary_hits(title),
@@ -203,6 +230,139 @@ def _https_url(url: str) -> str | None:
 def catalog_review_candidates(title: str, *, lang: str, entity: str) -> list[str]:
     url = pick_catalog_review_url(title, lang=lang, entity=entity)
     return [url] if url else []
+
+
+def _imdb_hits(title: str) -> list[str]:
+    slug = title.strip().casefold()
+    if not slug:
+        return []
+    api = f"https://v3.sg.media-imdb.com/suggestion/x/{quote(slug)}.json"
+    got = http_get(api)
+    if got is None:
+        return []
+    try:
+        parsed = json.loads(got[1])
+    except json.JSONDecodeError:
+        return []
+    rows = parsed.get("d") if isinstance(parsed, dict) else None
+    if not isinstance(rows, list):
+        return []
+    items: list[tuple[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        imdb_id = row.get("id")
+        if not isinstance(imdb_id, str) or not imdb_id.startswith("tt"):
+            continue
+        qid = str(row.get("qid") or "")
+        if qid and qid not in {"movie", "tvMovie", "short"}:
+            continue
+        listed = str(row.get("l") or "")
+        items.append((listed, f"https://www.imdb.com/title/{imdb_id}/"))
+    return _urls_for_matching_titles(items, title)
+
+
+def _kinopoisk_hits(title: str, lang: str) -> list[str]:
+    url = _wikidata_film_catalog(title, lang).get("kinopoisk")
+    return [url] if url else []
+
+
+def _wikidata_film_catalog(title: str, lang: str) -> dict[str, str]:
+    search_lang = (
+        "ru" if prefers_russian_catalog(title, lang) else _WIKI_LANG.get(lang, "en")
+    )
+    search_url = (
+        "https://www.wikidata.org/w/api.php?action=wbsearchentities"
+        f"&search={quote(title)}&language={search_lang}&uselang={search_lang}"
+        "&type=item&limit=5&format=json"
+    )
+    got = http_get(search_url)
+    if got is None:
+        return {}
+    try:
+        parsed = json.loads(got[1])
+    except json.JSONDecodeError:
+        return {}
+    hits = parsed.get("search") if isinstance(parsed, dict) else None
+    if not isinstance(hits, list):
+        return {}
+    ids = [
+        str(hit.get("id"))
+        for hit in hits
+        if isinstance(hit, dict) and isinstance(hit.get("id"), str)
+    ]
+    if not ids:
+        return {}
+    get_url = (
+        "https://www.wikidata.org/w/api.php?action=wbgetentities"
+        f"&ids={'|'.join(ids)}&props=labels|claims&languages=en|ru|{search_lang}"
+        "&format=json"
+    )
+    got = http_get(get_url)
+    if got is None:
+        return {}
+    try:
+        parsed = json.loads(got[1])
+    except json.JSONDecodeError:
+        return {}
+    entities = parsed.get("entities") if isinstance(parsed, dict) else None
+    if not isinstance(entities, dict):
+        return {}
+    ranked: list[tuple[int, int, dict[str, str]]] = []
+    needle = " ".join(title.casefold().split())
+    for entity in entities.values():
+        if not isinstance(entity, dict):
+            continue
+        listed = _wikidata_label(entity, search_lang)
+        if not listed or not page_mentions_title(listed, title):
+            continue
+        found: dict[str, str] = {}
+        kp = _wikidata_external_id(entity, "P2605")
+        imdb = _wikidata_external_id(entity, "P345")
+        if kp and kp.isdigit():
+            found["kinopoisk"] = f"https://www.kinopoisk.ru/film/{kp}/"
+        if imdb and imdb.startswith("tt"):
+            found["imdb"] = f"https://www.imdb.com/title/{imdb}/"
+        if not found:
+            continue
+        collapsed = " ".join(listed.casefold().split())
+        exact = 0 if collapsed == needle else 1
+        ranked.append((exact, abs(len(collapsed) - len(needle)), found))
+    ranked.sort()
+    return ranked[0][2] if ranked else {}
+
+
+def _wikidata_label(entity: dict[str, object], lang: str) -> str:
+    labels = entity.get("labels")
+    if not isinstance(labels, dict):
+        return ""
+    for code in (lang, "ru", "en"):
+        entry = labels.get(code)
+        if isinstance(entry, dict):
+            value = entry.get("value")
+            if isinstance(value, str) and value.strip():
+                return value
+    return ""
+
+
+def _wikidata_external_id(entity: dict[str, object], prop: str) -> str | None:
+    claims = entity.get("claims")
+    if not isinstance(claims, dict):
+        return None
+    snaks = claims.get(prop)
+    if not isinstance(snaks, list) or not snaks:
+        return None
+    first = snaks[0]
+    if not isinstance(first, dict):
+        return None
+    mainsnak = first.get("mainsnak")
+    if not isinstance(mainsnak, dict):
+        return None
+    datavalue = mainsnak.get("datavalue")
+    if not isinstance(datavalue, dict):
+        return None
+    value = datavalue.get("value")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _wikipedia_source(title: str, lang: str, *, film: bool) -> list[str]:
@@ -264,6 +424,86 @@ def _wikipedia_hits(query: str, wiki_lang: str, book_title: str) -> list[str]:
         if name and page_mentions_title(name, book_title):
             hits.append(url)
     return hits
+
+
+def _absolute_catalog_url(base: str, path: str) -> str:
+    path = path.strip()
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    if not path.startswith("/"):
+        path = "/" + path
+    return base.rstrip("/") + path
+
+
+def _urls_for_matching_titles(
+    items: list[tuple[str, str]], book_title: str
+) -> list[str]:
+    needle = " ".join(book_title.casefold().split())
+    ranked: list[tuple[int, int, str]] = []
+    for listed, url in items:
+        if not listed or not url or not page_mentions_title(listed, book_title):
+            continue
+        collapsed = " ".join(listed.casefold().split())
+        exact = 0 if collapsed == needle else 1
+        ranked.append((exact, abs(len(collapsed) - len(needle)), url))
+    ranked.sort()
+    return [url for _, _, url in ranked]
+
+
+def _litres_hits(title: str) -> list[str]:
+    api = (
+        "https://api.litres.ru/foundation/api/search"
+        f"?limit=5&types=text_book&q={quote(title)}"
+    )
+    got = http_get(api)
+    if got is None:
+        return []
+    try:
+        parsed = json.loads(got[1])
+    except json.JSONDecodeError:
+        return []
+    payload = parsed.get("payload") if isinstance(parsed, dict) else None
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    items: list[tuple[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        instance = row.get("instance")
+        if not isinstance(instance, dict):
+            continue
+        listed = str(instance.get("title") or "")
+        path = instance.get("url")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        items.append((listed, _absolute_catalog_url("https://www.litres.ru", path)))
+    return _urls_for_matching_titles(items, title)
+
+
+def _goodreads_hits(title: str) -> list[str]:
+    api = (
+        "https://www.goodreads.com/book/auto_complete" f"?format=json&q={quote(title)}"
+    )
+    got = http_get(api)
+    if got is None:
+        return []
+    try:
+        parsed = json.loads(got[1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    items: list[tuple[str, str]] = []
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        listed = str(row.get("bookTitleBare") or row.get("title") or "")
+        path = row.get("bookUrl")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        items.append((listed, _absolute_catalog_url("https://www.goodreads.com", path)))
+    return _urls_for_matching_titles(items, title)
 
 
 def _google_books_hits(title: str) -> list[str]:
