@@ -1442,6 +1442,11 @@ class TestAddConversation(BotHandlerTestCase):
         book = bot.db_get_book(book_id)
         self.assertEqual(book["notify_adder_id"], self.update.effective_user.id)
         self.assertEqual(book["notify_sent"], 0)
+        self.assertEqual(
+            bot.db_get_user_vote(self.update.effective_user.id, book_id), 1
+        )
+        self.assertEqual(book["votes_yes"], 1)
+        self.assertEqual(book["vote_count"], 1)
 
     async def test_add_back_from_confirm_returns_to_description(self):
         self.ctx.user_data["new_book"] = {

@@ -56,7 +56,22 @@ _FETCH_HOST_SUFFIXES = (
     "play.google.com",
     "googleapis.com",
 )
-_WIKI_LANG = {"en": "en", "ru": "ru", "de": "de"}
+_WIKI_LANG = {
+    "en": "en",
+    "ru": "ru",
+    "de": "de",
+    "fr": "fr",
+    "es": "es",
+    "it": "it",
+    "pl": "pl",
+    "uk": "uk",
+    "zh": "zh",
+    "ja": "ja",
+    "ko": "ko",
+    "ar": "ar",
+    "he": "he",
+    "el": "el",
+}
 _SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)[^>]*>.*?</\1>")
 _BR_RE = re.compile(r"(?is)<br\s*/?>")
 _P_RE = re.compile(r"(?is)</p>")

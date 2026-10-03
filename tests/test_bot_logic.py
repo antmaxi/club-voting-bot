@@ -528,6 +528,15 @@ class TestDatabase(unittest.TestCase):
         self.assertFalse(bot.club_user_has_shown_name("", None))
         self.assertTrue(bot.club_user_has_shown_name("Maria", None))
 
+    def test_init_db_counts_adder_as_yes_without_overwriting(self):
+        missing = bot.db_add_book("New", "A", 10, True, "", "", 42, "Ada")
+        changed = bot.db_add_book("Changed", "A", 10, True, "", "", 42, "Ada")
+        bot.db_cast_vote(42, changed, -1)
+        bot.init_db()
+        self.assertEqual(bot.db_get_user_vote(42, missing), 1)
+        self.assertEqual(bot.db_get_user_vote(42, changed), -1)
+        self.assertEqual(bot.db_get_book(missing)["votes_yes"], 1)
+
     def test_init_db_fills_empty_club_user_names_from_books(self):
         book_id = bot.db_add_book(
             "Named", "A", 10, True, "", "", 42, "Alice Example", None

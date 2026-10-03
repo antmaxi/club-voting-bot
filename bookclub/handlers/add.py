@@ -28,6 +28,7 @@ from bookclub.config import (
 )
 from bookclub.db import (
     db_add_book,
+    db_cast_vote,
     db_delete_add_draft,
     db_get_add_draft,
     db_get_book,
@@ -620,6 +621,8 @@ async def complete_new_book(
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")
+    # Adding a book is a yes vote from the person who proposed it.
+    db_cast_vote(user.id, book_id, 1)
     draft_id = ctx.user_data.get("add_draft_id")
     if draft_id:
         db_delete_add_draft(int(draft_id), user.id)

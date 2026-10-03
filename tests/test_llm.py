@@ -362,6 +362,80 @@ class TestSuggestReviewLink(unittest.TestCase):
         self.assertIn("1225 pages", user)
         self.assertIn("do not guess", system.casefold())
         self.assertIn("page count", user)
+        self.assertIn("in English, the same language as the title", user)
+
+
+class TestTitleLanguage(unittest.TestCase):
+    def test_detects_script_and_title_words(self):
+        self.assertEqual(llm.title_language("Война и мир"), "ru")
+        self.assertEqual(llm.title_language("War and Peace"), "en")
+        self.assertEqual(llm.title_language("Der Prozess"), "de")
+        self.assertEqual(llm.title_language("Die Verwandlung"), "de")
+        self.assertEqual(llm.title_language("Über den Tellerrand"), "de")
+        self.assertEqual(llm.title_language("Le Petit Prince"), "fr")
+        self.assertEqual(llm.title_language("坊っちゃん"), "ja")
+        self.assertIsNone(llm.title_language("1984"))
+        self.assertIsNone(llm.title_language("Dune"))
+
+    def test_latin_title_does_not_inherit_russian_ui(self):
+        self.assertEqual(llm.suggestion_catalog_lang("Dune", "ru"), "en")
+        self.assertEqual(llm.suggestion_catalog_lang("Der Prozess", "ru"), "de")
+        self.assertEqual(llm.suggestion_catalog_lang("1984", "ru"), "ru")
+
+    def test_prompt_uses_title_language_not_ui_language(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "War and Peace",
+                lang="ru",
+                entity="book",
+                enabled_fields=frozenset({"author", "description", "review"}),
+            )
+            user = mocked.call_args[0][0][1]["content"]
+            system = mocked.call_args[0][0][0]["content"]
+            self.assertIn("in English, the same language as the title", user)
+            self.assertNotIn("in Russian", user)
+            self.assertIn("same language as the title", system)
+            self.assertIn("Prefer a Goodreads page", user)
+
+            llm.suggest_book_fields(
+                "Война и мир",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"description", "review"}),
+            )
+            user = mocked.call_args[0][0][1]["content"]
+            self.assertIn("in Russian, the same language as the title", user)
+            self.assertNotIn("in English", user)
+            self.assertIn("Prefer a LitRes page", user)
+
+            llm.suggest_book_fields(
+                "Der Prozess",
+                lang="ru",
+                entity="book",
+                enabled_fields=frozenset({"author", "description"}),
+            )
+            user = mocked.call_args[0][0][1]["content"]
+            self.assertIn("in German, the same language as the title", user)
+            self.assertNotIn("in Russian", user)
+
+    def test_unnamed_title_language_is_not_forced_to_ui(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "Dune",
+                lang="ru",
+                entity="book",
+                enabled_fields=frozenset({"description"}),
+            )
+        user = mocked.call_args[0][0][1]["content"]
+        self.assertIn("in the same language as the title the user wrote", user)
+        self.assertNotIn("in Russian", user)
+        self.assertNotIn("in English", user)
 
 
 class TestChatCompletion(unittest.TestCase):

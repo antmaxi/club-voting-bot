@@ -30,7 +30,114 @@ from bookclub.ui import is_valid_url
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 _CREATION_YEAR_MIN = 1000
 _CREATION_YEAR_MAX = 2100
-_DESC_LANG = {"en": "English", "ru": "Russian", "de": "German"}
+_UKRAINIAN_RE = re.compile(r"[іїєґІЇЄҐ]")
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
+_LATIN_RE = re.compile(r"[A-Za-zÄÖÜäöüß]")
+_GERMAN_CHAR_RE = re.compile(r"[äöüÄÖÜß]")
+_POLISH_CHAR_RE = re.compile(r"[ąćęłńśźżĄĆĘŁŃŚŹŻ]")
+_HIRAGANA_KATAKANA_RE = re.compile(r"[\u3040-\u30ff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+_HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
+_GREEK_RE = re.compile(r"[\u0370-\u03FF]")
+_TITLE_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+# Distinctive title words. Shared articles ("la", "un") stay low so a tie
+# does not pick the wrong language.
+_TITLE_WORD_HINTS: dict[str, dict[str, int]] = {
+    "de": {
+        "der": 2,
+        "die": 2,
+        "das": 2,
+        "den": 2,
+        "dem": 2,
+        "des": 2,
+        "und": 2,
+        "ein": 2,
+        "eine": 2,
+        "von": 2,
+        "zum": 2,
+        "zur": 2,
+        "für": 2,
+        "fuer": 2,
+        "über": 2,
+        "ueber": 2,
+        "oder": 2,
+        "nicht": 2,
+        "im": 1,
+        "mit": 1,
+        "aus": 1,
+        "auf": 1,
+    },
+    "en": {
+        "the": 2,
+        "and": 2,
+        "of": 2,
+        "an": 2,
+        "from": 2,
+        "with": 1,
+        "for": 1,
+        "a": 1,
+    },
+    "fr": {
+        "les": 2,
+        "des": 2,
+        "une": 2,
+        "dans": 2,
+        "avec": 2,
+        "aux": 2,
+        "du": 2,
+        "le": 2,
+        "et": 1,
+        "la": 1,
+        "un": 1,
+        "au": 1,
+    },
+    "es": {
+        "los": 2,
+        "las": 2,
+        "del": 2,
+        "para": 2,
+        "el": 2,
+        "por": 1,
+        "una": 1,
+        "la": 1,
+        "un": 1,
+        "y": 1,
+    },
+    "it": {
+        "gli": 2,
+        "della": 2,
+        "dei": 2,
+        "delle": 2,
+        "nel": 2,
+        "nella": 2,
+        "uno": 2,
+        "il": 2,
+        "lo": 2,
+        "di": 1,
+        "la": 1,
+        "le": 1,
+        "un": 1,
+        "e": 1,
+    },
+}
+_TITLE_LANG_NAMES = {
+    "en": "English",
+    "ru": "Russian",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "pl": "Polish",
+    "uk": "Ukrainian",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ar": "Arabic",
+    "he": "Hebrew",
+    "el": "Greek",
+}
 _TRUE_WORDS = {
     "1",
     "true",
@@ -91,6 +198,66 @@ class LlmRequestError(Exception):
         return f"{self.kind}: {self.detail}"
 
 
+def title_language(title: str) -> str | None:
+    """Language code implied by the title text the user typed, if one is clear."""
+    if _UKRAINIAN_RE.search(title):
+        return "uk"
+    cyrillic = len(_CYRILLIC_RE.findall(title))
+    latin = len(_LATIN_RE.findall(title))
+    if cyrillic and cyrillic >= latin:
+        return "ru"
+    if _HIRAGANA_KATAKANA_RE.search(title):
+        return "ja"
+    if _HANGUL_RE.search(title):
+        return "ko"
+    if _CJK_RE.search(title):
+        return "zh"
+    if _ARABIC_RE.search(title):
+        return "ar"
+    if _HEBREW_RE.search(title):
+        return "he"
+    if _GREEK_RE.search(title):
+        return "el"
+    if _POLISH_CHAR_RE.search(title):
+        return "pl"
+    if _GERMAN_CHAR_RE.search(title):
+        return "de"
+    scores = {code: 0 for code in _TITLE_WORD_HINTS}
+    for word in _TITLE_WORD_RE.findall(title):
+        lowered = word.casefold()
+        for code, hints in _TITLE_WORD_HINTS.items():
+            scores[code] += hints.get(lowered, 0)
+    best = max(scores.values(), default=0)
+    if best <= 0:
+        return None
+    winners = [code for code, score in scores.items() if score == best]
+    if len(winners) != 1:
+        return None
+    return winners[0]
+
+
+def suggestion_catalog_lang(title: str, fallback: str) -> str:
+    """Catalog/search language: the title's language, not the bot UI language.
+
+    A Latin-script title with no clearer signal is not treated as Russian just
+    because the UI is Russian. Titles with no letters keep the UI language.
+    """
+    detected = title_language(title)
+    if detected:
+        return detected
+    if _LATIN_RE.search(title) and fallback == "ru":
+        return "en"
+    return fallback or "en"
+
+
+def _writing_language_phrase(title: str) -> str:
+    """How free-text suggestions should be written: match the typed title."""
+    name = _TITLE_LANG_NAMES.get(title_language(title) or "")
+    if name:
+        return f"in {name}, the same language as the title the user wrote"
+    return "in the same language as the title the user wrote"
+
+
 def suggest_book_fields(
     title: str,
     *,
@@ -110,6 +277,7 @@ def suggest_book_fields(
     if not wanted:
         return {}, None
     club_entity = entity or CLUB_ENTITY
+    lang = suggestion_catalog_lang(title, lang)
     try:
         content = chat_completion(
             _suggestion_messages(title, lang=lang, entity=club_entity, wanted=wanted)
@@ -138,6 +306,7 @@ def suggest_review_link(
     ``title``.
     """
     club_entity = entity or CLUB_ENTITY
+    lang = suggestion_catalog_lang(title, lang)
     catalog = pick_catalog_review_url(title, lang=lang, entity=club_entity)
     if catalog:
         return catalog, None
@@ -175,6 +344,7 @@ def suggest_fields_after_review(
     if not wanted:
         return {}, None
     club_entity = entity or CLUB_ENTITY
+    lang = suggestion_catalog_lang(title, lang)
     fetched = fetch_review_text(review_url)
     if fetched is not None:
         _final, page_text = fetched
@@ -215,7 +385,6 @@ def suggest_book_fields_from_page(
                 title,
                 page_text,
                 review_url,
-                lang=lang,
                 entity=club_entity,
                 wanted=wanted,
             )
@@ -630,11 +799,11 @@ def apply_suggestions_to_book(
 def _suggestion_messages(
     title: str, *, lang: str, entity: str, wanted: list[str]
 ) -> list[dict[str, str]]:
-    desc_lang = _DESC_LANG.get(lang, "English")
+    writing = _writing_language_phrase(title)
     if entity == "film":
         kind = "film"
         field_help = {
-            "author": "director (full name)",
+            "author": f"director (full name, {writing})",
             "pages": (
                 "runtime in minutes (integer); prefer the number printed on the "
                 "catalog/review page (IMDb, Kinopoisk, or Letterboxd usually "
@@ -657,12 +826,12 @@ def _suggestion_messages(
             ),
             "creation_year": "creation_year: 4-digit release year",
             "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
-            "description": f"description: 2–4 sentences in {desc_lang}",
+            "description": f"description: 2–4 sentences {writing}",
         }
     else:
         kind = "book"
         field_help = {
-            "author": "author (full name)",
+            "author": f"author (full name, {writing})",
             "pages": (
                 "page count (integer); prefer the number printed on the "
                 "catalog/review page (Goodreads or LitRes usually mention it), "
@@ -685,7 +854,7 @@ def _suggestion_messages(
             ),
             "creation_year": "creation_year: 4-digit publication year",
             "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
-            "description": f"description: 2–4 sentences in {desc_lang}",
+            "description": f"description: 2–4 sentences {writing}",
         }
     lines = [field_help[name] for name in wanted if name in field_help]
     if "pages" in wanted and "review" in wanted:
@@ -714,7 +883,10 @@ def _suggestion_messages(
         "You look up well-known bibliographic facts. "
         "Reply with a single JSON object and no other text. "
         "Omit a field when you are not reasonably sure. "
-        "Do not invent review URLs." + lookup_hint
+        "Do not invent review URLs. "
+        "Write the description and the author or director name in the same "
+        "language as the title the user typed. Do not translate that text "
+        "into another language." + lookup_hint
     )
     user = (
         f"Suggest metadata for this {kind} titled {title!r}.\n"
@@ -728,11 +900,11 @@ def _suggestion_messages(
     ]
 
 
-def _field_help(lang: str, entity: str) -> dict[str, str]:
-    desc_lang = _DESC_LANG.get(lang, "English")
+def _field_help(title: str, entity: str) -> dict[str, str]:
+    writing = _writing_language_phrase(title)
     if entity == "film":
         return {
-            "author": "director (full name)",
+            "author": f"director (full name, {writing})",
             "pages": (
                 "runtime in minutes (integer); copy the number printed on the "
                 "given catalog/review page (IMDb, Kinopoisk, or Letterboxd usually "
@@ -745,10 +917,10 @@ def _field_help(lang: str, entity: str) -> dict[str, str]:
             ),
             "creation_year": "creation_year: 4-digit release year",
             "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
-            "description": f"description: 2–4 sentences in {desc_lang}",
+            "description": f"description: 2–4 sentences {writing}",
         }
     return {
-        "author": "author (full name)",
+        "author": f"author (full name, {writing})",
         "pages": (
             "page count (integer); copy the number printed on the given "
             "catalog/review page (Goodreads or LitRes usually mention it), "
@@ -761,7 +933,7 @@ def _field_help(lang: str, entity: str) -> dict[str, str]:
         ),
         "creation_year": "creation_year: 4-digit publication year",
         "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
-        "description": f"description: 2–4 sentences in {desc_lang}",
+        "description": f"description: 2–4 sentences {writing}",
     }
 
 
@@ -812,12 +984,11 @@ def _page_suggestion_messages(
     page_text: str,
     review_url: str,
     *,
-    lang: str,
     entity: str,
     wanted: list[str],
 ) -> list[dict[str, str]]:
     kind = "film" if entity == "film" else "book"
-    field_help = _field_help(lang, entity)
+    field_help = _field_help(title, entity)
     lines = [field_help[name] for name in wanted if name in field_help]
     if entity == "film":
         copy_hint = "Copy runtime from this page text when it lists it; do not guess."
@@ -832,7 +1003,10 @@ def _page_suggestion_messages(
         "You extract bibliographic facts from the supplied catalog/review page. "
         "Reply with a single JSON object and no other text. "
         "Omit a field when the page does not support it. "
-        "Do not invent review URLs or numeric IDs. " + copy_hint
+        "Do not invent review URLs or numeric IDs. "
+        "Write the description and the author or director name in the same "
+        "language as the title the user typed, translating from the page "
+        "when needed. " + copy_hint
     )
     user = (
         f"Extract metadata for this {kind} titled {title!r}.\n"

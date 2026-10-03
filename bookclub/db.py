@@ -178,6 +178,13 @@ def init_db() -> None:
                 ELSE club_users.full_name END,
               username = COALESCE(club_users.username, excluded.username)
         """)
+        # The person who added a book counts as a yes vote, unless they
+        # already voted something else.
+        conn.execute("""
+            INSERT OR IGNORE INTO votes (user_id, book_id, score)
+            SELECT added_by, id, 1 FROM books
+            WHERE added_by > 0
+        """)
         conn.commit()
     db_rebuild_attendance_surplus()
 
