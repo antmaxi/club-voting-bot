@@ -296,3 +296,154 @@ class TestCatalogLookup(unittest.TestCase):
                 "War and Peace",
             )
         self.assertEqual(chosen, "https://en.wikipedia.org/wiki/War_and_Peace")
+
+
+class TestSameTitleChoices(unittest.TestCase):
+    def test_exact_title_beats_a_longer_higher_rated_variant(self):
+        hits = [
+            review_page.CatalogHit(
+                url="https://www.litres.ru/book/long/",
+                title="Война и мир. Том 1",
+                review_count=5000,
+            ),
+            review_page.CatalogHit(
+                url="https://www.litres.ru/book/exact/",
+                title="Война и мир",
+                review_count=3,
+            ),
+        ]
+        chosen = review_page._same_title_choices(hits, "Война и мир")
+        self.assertEqual(
+            [hit.url for hit in chosen], ["https://www.litres.ru/book/exact/"]
+        )
+
+    def test_litres_same_title_ranked_by_ratings(self):
+        litres = {
+            "payload": {
+                "data": [
+                    {
+                        "instance": {
+                            "title": "Мастер и Маргарита",
+                            "url": "/book/quiet/",
+                            "rating": {"rated_total_count": 18},
+                            "persons": [
+                                {"full_name": "Михаил Булгаков", "role": "author"},
+                                {"full_name": "Литрес Классика", "role": "publisher"},
+                            ],
+                        }
+                    },
+                    {
+                        "instance": {
+                            "title": "Мастер и Маргарита",
+                            "url": "/book/popular/",
+                            "rating": {"rated_total_count": 3127},
+                            "persons": [
+                                {"full_name": "Михаил Булгаков", "role": "author"}
+                            ],
+                            "subtitle": "Иллюстрированное издание",
+                        }
+                    },
+                    {
+                        "instance": {
+                            "title": "Мастер и Маргарита. Графический роман",
+                            "url": "/book/graphic/",
+                            "rating": {"rated_total_count": 99999},
+                        }
+                    },
+                ]
+            }
+        }
+
+        def fake_get(url: str, **_kwargs: object) -> tuple[str, str] | None:
+            if "api.litres.ru" in url:
+                return url, json.dumps(litres)
+            return None
+
+        with patch.object(review_page, "http_get", side_effect=fake_get):
+            options = review_page.catalog_review_options(
+                "Мастер и Маргарита", lang="ru", entity="book"
+            )
+        self.assertEqual(
+            [hit.url for hit in options],
+            [
+                "https://www.litres.ru/book/popular/",
+                "https://www.litres.ru/book/quiet/",
+            ],
+        )
+        self.assertEqual(options[0].review_count, 3127)
+        self.assertEqual(options[0].author, "Михаил Булгаков")
+        self.assertEqual(options[0].detail, "Иллюстрированное издание")
+        self.assertEqual(options[1].author, "Михаил Булгаков")
+
+    def test_goodreads_same_title_ranked_by_ratings(self):
+        goodreads = [
+            {
+                "bookTitleBare": "Dune",
+                "bookUrl": "/book/show/1.Dune_quiet",
+                "ratingsCount": 10,
+                "author": {"name": "Frank Herbert"},
+            },
+            {
+                "bookTitleBare": "Dune",
+                "bookUrl": "/book/show/2.Dune_popular",
+                "ratingsCount": 9000,
+                "author": {"name": "Frank Herbert"},
+            },
+            {
+                "bookTitleBare": "Dune Messiah",
+                "bookUrl": "/book/show/3.Dune_Messiah",
+                "ratingsCount": 50,
+                "author": {"name": "Frank Herbert"},
+            },
+        ]
+
+        def fake_get(url: str, **_kwargs: object) -> tuple[str, str] | None:
+            if "goodreads.com" in url:
+                return url, json.dumps(goodreads)
+            return None
+
+        with patch.object(review_page, "http_get", side_effect=fake_get):
+            options = review_page.catalog_review_options(
+                "Dune", lang="en", entity="book"
+            )
+        self.assertEqual(
+            [hit.url for hit in options],
+            [
+                "https://www.goodreads.com/book/show/2.Dune_popular",
+                "https://www.goodreads.com/book/show/1.Dune_quiet",
+            ],
+        )
+
+    def test_imdb_same_title_offers_each_year(self):
+        imdb = {
+            "d": [
+                {
+                    "id": "tt1160419",
+                    "l": "Dune",
+                    "qid": "movie",
+                    "y": 2021,
+                    "s": "Timothée Chalamet",
+                },
+                {"id": "tt0087182", "l": "Dune", "qid": "movie", "y": 1984},
+                {"id": "tt15239678", "l": "Dune: Part Two", "qid": "movie", "y": 2024},
+            ]
+        }
+
+        def fake_get(url: str, **_kwargs: object) -> tuple[str, str] | None:
+            if "media-imdb.com" in url:
+                return url, json.dumps(imdb)
+            return None
+
+        with patch.object(review_page, "http_get", side_effect=fake_get):
+            options = review_page.catalog_review_options(
+                "Dune", lang="en", entity="film"
+            )
+        self.assertEqual(
+            [hit.url for hit in options],
+            [
+                "https://www.imdb.com/title/tt1160419/",
+                "https://www.imdb.com/title/tt0087182/",
+            ],
+        )
+        self.assertEqual(options[0].detail, "2021")
+        self.assertEqual(options[1].detail, "1984")

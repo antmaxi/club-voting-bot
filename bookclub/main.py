@@ -68,6 +68,7 @@ from bookclub.handlers.add import (
     add_original_language_skip,
     add_pages,
     add_review,
+    add_review_pick_cb,
     add_start_cb,
     add_title,
     add_title_similar_cb,
@@ -182,6 +183,7 @@ def add_flow_states() -> dict[Any, list[Any]]:
             *_ADD_NAV_HANDLERS,
         ],
         ADDING_REVIEW: [
+            CallbackQueryHandler(add_review_pick_cb, pattern=r"^add_review_pick:\d+$"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
             *_ADD_NAV_HANDLERS,
         ],

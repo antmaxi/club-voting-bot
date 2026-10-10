@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 import bookclub.config as cfg
 import bookclub.logging_setup as log_setup
 from bookclub import llm
+from bookclub.review_page import CatalogHit
 
 
 class TestExtractJson(unittest.TestCase):
@@ -317,7 +318,10 @@ class TestSuggestReviewLink(unittest.TestCase):
         wiki = "https://en.wikipedia.org/wiki/War_and_Peace"
         with (
             patch.object(cfg, "LLM_API_KEY", "sk-test"),
-            patch("bookclub.llm.pick_catalog_review_url", return_value=wiki),
+            patch(
+                "bookclub.llm.catalog_review_options",
+                return_value=[CatalogHit(url=wiki, title="War and Peace")],
+            ),
             patch.object(llm, "chat_completion") as mocked,
         ):
             url, error = llm.suggest_review_link("War and Peace", lang="en")
@@ -329,7 +333,7 @@ class TestSuggestReviewLink(unittest.TestCase):
         fake = "https://www.goodreads.com/book/show/999.War_and_Peace"
         with (
             patch.object(cfg, "LLM_API_KEY", "sk-test"),
-            patch("bookclub.llm.pick_catalog_review_url", return_value=None),
+            patch("bookclub.llm.catalog_review_options", return_value=[]),
             patch.object(
                 llm, "chat_completion", return_value=json.dumps({"review_link": fake})
             ),

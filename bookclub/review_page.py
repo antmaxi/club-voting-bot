@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from html import unescape
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -194,43 +197,83 @@ def prefers_russian_catalog(title: str, lang: str) -> bool:
     return lang == "ru" or bool(_CYRILLIC_RE.search(title))
 
 
-def pick_catalog_review_url(title: str, *, lang: str, entity: str) -> str | None:
-    """First live catalog URL whose listed title matches ``title``."""
+@dataclass(frozen=True)
+class CatalogHit:
+    """One catalog page that can be offered as a review link."""
+
+    url: str
+    title: str
+    review_count: int | None = None
+    author: str = ""
+    detail: str = ""
+
+
+_CHOICE_LIMIT = 8
+
+
+def catalog_choice_dict(hit: CatalogHit) -> dict[str, Any]:
+    return {
+        "url": hit.url,
+        "title": hit.title,
+        "review_count": hit.review_count,
+        "author": hit.author,
+        "detail": hit.detail,
+    }
+
+
+def _catalog_sources(
+    title: str, lang: str, entity: str
+) -> list[Callable[[], list[CatalogHit]]]:
     if entity == "film":
         if prefers_russian_catalog(title, lang):
-            sources = [
+            return [
                 lambda: _kinopoisk_hits(title, lang),
                 lambda: _imdb_hits(title),
                 lambda: _wikipedia_source(title, lang, film=True),
             ]
-        else:
-            sources = [
-                lambda: _imdb_hits(title),
-                lambda: _kinopoisk_hits(title, lang),
-                lambda: _wikipedia_source(title, lang, film=True),
-            ]
-    elif prefers_russian_catalog(title, lang):
-        sources = [
+        return [
+            lambda: _imdb_hits(title),
+            lambda: _kinopoisk_hits(title, lang),
+            lambda: _wikipedia_source(title, lang, film=True),
+        ]
+    if prefers_russian_catalog(title, lang):
+        return [
             lambda: _litres_hits(title),
             lambda: _goodreads_hits(title),
             lambda: _wikipedia_source(title, lang, film=False),
             lambda: _google_books_hits(title),
             lambda: _openlibrary_hits(title),
         ]
-    else:
-        sources = [
-            lambda: _goodreads_hits(title),
-            lambda: _litres_hits(title),
-            lambda: _wikipedia_source(title, lang, film=False),
-            lambda: _google_books_hits(title),
-            lambda: _openlibrary_hits(title),
-        ]
-    for source in sources:
-        for url in source():
-            normalized = _https_url(url)
-            if normalized:
-                return normalized
-    return None
+    return [
+        lambda: _goodreads_hits(title),
+        lambda: _litres_hits(title),
+        lambda: _wikipedia_source(title, lang, film=False),
+        lambda: _google_books_hits(title),
+        lambda: _openlibrary_hits(title),
+    ]
+
+
+def catalog_review_options(title: str, *, lang: str, entity: str) -> list[CatalogHit]:
+    """Same-title pages from the first catalog that has a match.
+
+    Prefers an exact title over a longer variant. When several pages share
+    that title, they are ordered by rating count (highest first) when the
+    catalog provides one.
+    """
+    for source in _catalog_sources(title, lang, entity):
+        choices = _same_title_choices(source(), title)
+        if choices:
+            return choices
+    return []
+
+
+def pick_catalog_review_url(title: str, *, lang: str, entity: str) -> str | None:
+    """Best live catalog URL whose listed title matches ``title``.
+
+    When several pages share that title, this is the one with the most ratings.
+    """
+    options = catalog_review_options(title, lang=lang, entity=entity)
+    return options[0].url if options else None
 
 
 def _https_url(url: str) -> str | None:
@@ -243,11 +286,55 @@ def _https_url(url: str) -> str | None:
 
 
 def catalog_review_candidates(title: str, *, lang: str, entity: str) -> list[str]:
-    url = pick_catalog_review_url(title, lang=lang, entity=entity)
-    return [url] if url else []
+    return [hit.url for hit in catalog_review_options(title, lang=lang, entity=entity)]
 
 
-def _imdb_hits(title: str) -> list[str]:
+def _collapsed_title(title: str) -> str:
+    return " ".join(title.casefold().split())
+
+
+def _optional_count(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and value >= 0 and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _same_title_choices(hits: list[CatalogHit], book_title: str) -> list[CatalogHit]:
+    """Hits that share the best listed title, most ratings first."""
+    needle = _collapsed_title(book_title)
+    matching: list[CatalogHit] = []
+    seen: set[str] = set()
+    for hit in hits:
+        url = _https_url(hit.url)
+        listed = hit.title.strip()
+        if url is None or url in seen or not listed:
+            continue
+        if not page_mentions_title(listed, book_title):
+            continue
+        seen.add(url)
+        matching.append(replace(hit, url=url, title=listed))
+    if not matching:
+        return []
+    exact = [hit for hit in matching if _collapsed_title(hit.title) == needle]
+    pool = exact
+    if not pool:
+        best = min(
+            matching,
+            key=lambda hit: abs(len(_collapsed_title(hit.title)) - len(needle)),
+        )
+        target = _collapsed_title(best.title)
+        pool = [hit for hit in matching if _collapsed_title(hit.title) == target]
+    pool.sort(key=lambda hit: (hit.review_count is None, -(hit.review_count or 0)))
+    return pool[:_CHOICE_LIMIT]
+
+
+def _imdb_hits(title: str) -> list[CatalogHit]:
     slug = title.strip().casefold()
     if not slug:
         return []
@@ -262,7 +349,7 @@ def _imdb_hits(title: str) -> list[str]:
     rows = parsed.get("d") if isinstance(parsed, dict) else None
     if not isinstance(rows, list):
         return []
-    items: list[tuple[str, str]] = []
+    items: list[CatalogHit] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -273,41 +360,45 @@ def _imdb_hits(title: str) -> list[str]:
         if qid and qid not in {"movie", "tvMovie", "short"}:
             continue
         listed = str(row.get("l") or "")
-        items.append((listed, f"https://www.imdb.com/title/{imdb_id}/"))
-    return _urls_for_matching_titles(items, title)
+        year = row.get("y")
+        stars = row.get("s")
+        items.append(
+            CatalogHit(
+                url=f"https://www.imdb.com/title/{imdb_id}/",
+                title=listed,
+                author=stars.strip() if isinstance(stars, str) else "",
+                detail=str(year) if isinstance(year, int) else "",
+            )
+        )
+    return items
 
 
-def _kinopoisk_hits(title: str, lang: str) -> list[str]:
-    url = _wikidata_film_catalog(title, lang).get("kinopoisk")
-    return [url] if url else []
-
-
-def _wikidata_film_catalog(title: str, lang: str) -> dict[str, str]:
+def _kinopoisk_hits(title: str, lang: str) -> list[CatalogHit]:
     search_lang = (
         "ru" if prefers_russian_catalog(title, lang) else _WIKI_LANG.get(lang, "en")
     )
     search_url = (
         "https://www.wikidata.org/w/api.php?action=wbsearchentities"
         f"&search={quote(title)}&language={search_lang}&uselang={search_lang}"
-        "&type=item&limit=5&format=json"
+        "&type=item&limit=8&format=json"
     )
     got = http_get(search_url)
     if got is None:
-        return {}
+        return []
     try:
         parsed = json.loads(got[1])
     except json.JSONDecodeError:
-        return {}
+        return []
     hits = parsed.get("search") if isinstance(parsed, dict) else None
     if not isinstance(hits, list):
-        return {}
+        return []
     ids = [
         str(hit.get("id"))
         for hit in hits
         if isinstance(hit, dict) and isinstance(hit.get("id"), str)
     ]
     if not ids:
-        return {}
+        return []
     get_url = (
         "https://www.wikidata.org/w/api.php?action=wbgetentities"
         f"&ids={'|'.join(ids)}&props=labels|claims&languages=en|ru|{search_lang}"
@@ -315,36 +406,31 @@ def _wikidata_film_catalog(title: str, lang: str) -> dict[str, str]:
     )
     got = http_get(get_url)
     if got is None:
-        return {}
+        return []
     try:
         parsed = json.loads(got[1])
     except json.JSONDecodeError:
-        return {}
+        return []
     entities = parsed.get("entities") if isinstance(parsed, dict) else None
     if not isinstance(entities, dict):
-        return {}
-    ranked: list[tuple[int, int, dict[str, str]]] = []
-    needle = " ".join(title.casefold().split())
-    for entity in entities.values():
+        return []
+    items: list[CatalogHit] = []
+    for entity_id in ids:
+        entity = entities.get(entity_id)
         if not isinstance(entity, dict):
             continue
         listed = _wikidata_label(entity, search_lang)
-        if not listed or not page_mentions_title(listed, title):
-            continue
-        found: dict[str, str] = {}
         kp = _wikidata_external_id(entity, "P2605")
-        imdb = _wikidata_external_id(entity, "P345")
-        if kp and kp.isdigit():
-            found["kinopoisk"] = f"https://www.kinopoisk.ru/film/{kp}/"
-        if imdb and imdb.startswith("tt"):
-            found["imdb"] = f"https://www.imdb.com/title/{imdb}/"
-        if not found:
+        if not listed or not kp or not kp.isdigit():
             continue
-        collapsed = " ".join(listed.casefold().split())
-        exact = 0 if collapsed == needle else 1
-        ranked.append((exact, abs(len(collapsed) - len(needle)), found))
-    ranked.sort()
-    return ranked[0][2] if ranked else {}
+        items.append(
+            CatalogHit(
+                url=f"https://www.kinopoisk.ru/film/{kp}/",
+                title=listed,
+                detail=_wikidata_year(entity),
+            )
+        )
+    return items
 
 
 def _wikidata_label(entity: dict[str, object], lang: str) -> str:
@@ -380,7 +466,35 @@ def _wikidata_external_id(entity: dict[str, object], prop: str) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _wikipedia_source(title: str, lang: str, *, film: bool) -> list[str]:
+def _wikidata_year(entity: dict[str, object]) -> str:
+    claims = entity.get("claims")
+    if not isinstance(claims, dict):
+        return ""
+    snaks = claims.get("P577")
+    if not isinstance(snaks, list):
+        return ""
+    for snak in snaks:
+        if not isinstance(snak, dict):
+            continue
+        mainsnak = snak.get("mainsnak")
+        if not isinstance(mainsnak, dict):
+            continue
+        datavalue = mainsnak.get("datavalue")
+        if not isinstance(datavalue, dict):
+            continue
+        value = datavalue.get("value")
+        if not isinstance(value, dict):
+            continue
+        time = value.get("time")
+        if not isinstance(time, str):
+            continue
+        year = time.lstrip("+-")[:4]
+        if year.isdigit():
+            return year
+    return ""
+
+
+def _wikipedia_source(title: str, lang: str, *, film: bool) -> list[CatalogHit]:
     for wiki_lang, query in _wiki_queries(title, lang, film=film):
         hits = _wikipedia_hits(query, wiki_lang, title)
         if hits:
@@ -405,7 +519,7 @@ def _wiki_queries(title: str, lang: str, *, film: bool) -> list[tuple[str, str]]
     return queries
 
 
-def _wikipedia_hits(query: str, wiki_lang: str, book_title: str) -> list[str]:
+def _wikipedia_hits(query: str, wiki_lang: str, book_title: str) -> list[CatalogHit]:
     api = (
         f"https://{wiki_lang}.wikipedia.org/w/api.php"
         f"?action=opensearch&search={quote(query)}"
@@ -425,7 +539,7 @@ def _wikipedia_hits(query: str, wiki_lang: str, book_title: str) -> list[str]:
     urls = parsed[3]
     if not isinstance(names, list) or not isinstance(urls, list):
         return []
-    hits: list[str] = []
+    hits: list[CatalogHit] = []
     for i, url in enumerate(urls):
         if not isinstance(url, str):
             continue
@@ -437,7 +551,7 @@ def _wikipedia_hits(query: str, wiki_lang: str, book_title: str) -> list[str]:
         if _DISAMBIG_RE.search(blob):
             continue
         if name and page_mentions_title(name, book_title):
-            hits.append(url)
+            hits.append(CatalogHit(url=url, title=name))
     return hits
 
 
@@ -450,25 +564,42 @@ def _absolute_catalog_url(base: str, path: str) -> str:
     return base.rstrip("/") + path
 
 
-def _urls_for_matching_titles(
-    items: list[tuple[str, str]], book_title: str
-) -> list[str]:
-    needle = " ".join(book_title.casefold().split())
-    ranked: list[tuple[int, int, str]] = []
-    for listed, url in items:
-        if not listed or not url or not page_mentions_title(listed, book_title):
+def _person_name(value: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        name = value.get("name") or value.get("full_name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return ""
+
+
+def _first_named(value: object) -> str:
+    if isinstance(value, list):
+        for item in value:
+            name = _person_name(item)
+            if name:
+                return name
+        return ""
+    return _person_name(value)
+
+
+def _litres_author(persons: object) -> str:
+    if not isinstance(persons, list):
+        return ""
+    for person in persons:
+        if not isinstance(person, dict) or person.get("role") != "author":
             continue
-        collapsed = " ".join(listed.casefold().split())
-        exact = 0 if collapsed == needle else 1
-        ranked.append((exact, abs(len(collapsed) - len(needle)), url))
-    ranked.sort()
-    return [url for _, _, url in ranked]
+        name = _person_name(person)
+        if name:
+            return name
+    return ""
 
 
-def _litres_hits(title: str) -> list[str]:
+def _litres_hits(title: str) -> list[CatalogHit]:
     api = (
         "https://api.litres.ru/foundation/api/search"
-        f"?limit=5&types=text_book&q={quote(title)}"
+        f"?limit=10&types=text_book&q={quote(title)}"
     )
     got = http_get(api)
     if got is None:
@@ -481,7 +612,7 @@ def _litres_hits(title: str) -> list[str]:
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return []
-    items: list[tuple[str, str]] = []
+    items: list[CatalogHit] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -492,11 +623,24 @@ def _litres_hits(title: str) -> list[str]:
         path = instance.get("url")
         if not isinstance(path, str) or not path.strip():
             continue
-        items.append((listed, _absolute_catalog_url("https://www.litres.ru", path)))
-    return _urls_for_matching_titles(items, title)
+        rating = instance.get("rating")
+        count = None
+        if isinstance(rating, dict):
+            count = _optional_count(rating.get("rated_total_count"))
+        subtitle = instance.get("subtitle")
+        items.append(
+            CatalogHit(
+                url=_absolute_catalog_url("https://www.litres.ru", path),
+                title=listed,
+                review_count=count,
+                author=_litres_author(instance.get("persons")),
+                detail=subtitle.strip() if isinstance(subtitle, str) else "",
+            )
+        )
+    return items
 
 
-def _goodreads_hits(title: str) -> list[str]:
+def _goodreads_hits(title: str) -> list[CatalogHit]:
     api = (
         "https://www.goodreads.com/book/auto_complete" f"?format=json&q={quote(title)}"
     )
@@ -509,7 +653,7 @@ def _goodreads_hits(title: str) -> list[str]:
         return []
     if not isinstance(parsed, list):
         return []
-    items: list[tuple[str, str]] = []
+    items: list[CatalogHit] = []
     for row in parsed:
         if not isinstance(row, dict):
             continue
@@ -517,14 +661,21 @@ def _goodreads_hits(title: str) -> list[str]:
         path = row.get("bookUrl")
         if not isinstance(path, str) or not path.strip():
             continue
-        items.append((listed, _absolute_catalog_url("https://www.goodreads.com", path)))
-    return _urls_for_matching_titles(items, title)
+        items.append(
+            CatalogHit(
+                url=_absolute_catalog_url("https://www.goodreads.com", path),
+                title=listed,
+                review_count=_optional_count(row.get("ratingsCount")),
+                author=_person_name(row.get("author")),
+            )
+        )
+    return items
 
 
-def _google_books_hits(title: str) -> list[str]:
+def _google_books_hits(title: str) -> list[CatalogHit]:
     api = (
         "https://www.googleapis.com/books/v1/volumes"
-        f"?q=intitle:{quote(title)}&maxResults=5&printType=books"
+        f"?q=intitle:{quote(title)}&maxResults=10&printType=books"
     )
     got = http_get(api)
     if got is None:
@@ -536,7 +687,7 @@ def _google_books_hits(title: str) -> list[str]:
     items = parsed.get("items") if isinstance(parsed, dict) else None
     if not isinstance(items, list):
         return []
-    hits: list[str] = []
+    hits: list[CatalogHit] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -544,18 +695,32 @@ def _google_books_hits(title: str) -> list[str]:
         if not isinstance(info, dict):
             continue
         listed = str(info.get("title") or "")
-        if listed and not page_mentions_title(listed, title):
-            continue
+        link = ""
         for key in ("canonicalVolumeLink", "infoLink", "previewLink"):
-            link = info.get(key)
-            if isinstance(link, str) and link.strip():
-                hits.append(link.strip())
+            raw = info.get(key)
+            if isinstance(raw, str) and raw.strip():
+                link = raw.strip()
                 break
+        if not link:
+            continue
+        subtitle = info.get("subtitle")
+        hits.append(
+            CatalogHit(
+                url=link,
+                title=listed,
+                review_count=_optional_count(info.get("ratingsCount")),
+                author=_first_named(info.get("authors")),
+                detail=subtitle.strip() if isinstance(subtitle, str) else "",
+            )
+        )
     return hits
 
 
-def _openlibrary_hits(title: str) -> list[str]:
-    api = f"https://openlibrary.org/search.json?title={quote(title)}&limit=5"
+def _openlibrary_hits(title: str) -> list[CatalogHit]:
+    api = (
+        "https://openlibrary.org/search.json"
+        f"?title={quote(title)}&limit=10&fields=key,title,author_name,ratings_count"
+    )
     got = http_get(api)
     if got is None:
         return []
@@ -566,14 +731,20 @@ def _openlibrary_hits(title: str) -> list[str]:
     docs = parsed.get("docs") if isinstance(parsed, dict) else None
     if not isinstance(docs, list):
         return []
-    hits: list[str] = []
+    hits: list[CatalogHit] = []
     for doc in docs:
         if not isinstance(doc, dict):
             continue
         listed = str(doc.get("title") or "")
-        if listed and not page_mentions_title(listed, title):
-            continue
         key = doc.get("key")
-        if isinstance(key, str) and key.startswith("/"):
-            hits.append(f"https://openlibrary.org{key}")
+        if not isinstance(key, str) or not key.startswith("/"):
+            continue
+        hits.append(
+            CatalogHit(
+                url=f"https://openlibrary.org{key}",
+                title=listed,
+                review_count=_optional_count(doc.get("ratings_count")),
+                author=_first_named(doc.get("author_name")),
+            )
+        )
     return hits

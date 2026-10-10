@@ -53,12 +53,13 @@ from bookclub.llm import (
     split_llm_error,
     suggest_book_fields,
     suggest_fields_after_review,
-    suggest_review_link,
+    suggest_review_choices,
     ui_llm_error,
 )
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
 from bookclub.original_languages import stored_original_language
+from bookclub.review_page import catalog_choice_dict
 from bookclub.ui import (
     add_ai_choice_keyboard,
     add_drafts_keyboard,
@@ -69,6 +70,7 @@ from bookclub.ui import (
     parse_optional_creation_year,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
+    usable_review_choices,
 )
 
 
@@ -90,6 +92,7 @@ def _clear_add_state(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
     ctx.user_data.pop("llm_extracted_review", None)
+    ctx.user_data.pop("review_choices", None)
     ctx.user_data.pop("add_draft_id", None)
     ctx.user_data.pop("add_from_start", None)
 
@@ -130,6 +133,7 @@ async def add_start_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
     ctx.user_data.pop("llm_extracted_review", None)
+    ctx.user_data.pop("review_choices", None)
     ctx.user_data["llm_add"] = action == "ai"
     return await send_add_prompt(update, ctx, ADDING_TITLE, edit=True)
 
@@ -207,10 +211,13 @@ async def add_draft_del_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
 
 async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     title = update.message.text.strip()
-    ctx.user_data.setdefault("new_book", {})["title"] = title
+    nb = ctx.user_data.setdefault("new_book", {})
+    nb["title"] = title
+    nb.pop("review_link", None)
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
     ctx.user_data.pop("llm_extracted_review", None)
+    ctx.user_data.pop("review_choices", None)
     lang = get_lang(ctx)
     similar = find_similar_book_titles(title)
     if similar:
@@ -291,14 +298,22 @@ async def apply_llm_suggestions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     )
     lang = get_lang(ctx)
     if entry_field_enabled("review"):
-        url, error = await asyncio.to_thread(suggest_review_link, title, lang=lang)
+        ctx.user_data.pop("review_choices", None)
+        choices, error = await asyncio.to_thread(
+            suggest_review_choices, title, lang=lang
+        )
         ctx.user_data["llm_suggestions_applied"] = True
         if not await _report_llm_error(update, ctx, error):
             return
         nb = ctx.user_data.setdefault("new_book", {})
         filled: set[str] = set()
-        if url:
-            filled = apply_suggestions_to_book(nb, {"review_link": url})
+        if len(choices) == 1:
+            filled = apply_suggestions_to_book(nb, {"review_link": choices[0].url})
+        elif len(choices) > 1:
+            nb.pop("review_link", None)
+            ctx.user_data["review_choices"] = [
+                catalog_choice_dict(hit) for hit in choices
+            ]
         ctx.user_data["llm_filled_keys"] = filled
         if filled:
             await _send_add_status(update, tr(ctx, "add_ai_suggested"))
@@ -469,7 +484,28 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         ctx.user_data["add_state"] = ADDING_REVIEW
         return ADDING_REVIEW
     ctx.user_data["new_book"]["review_link"] = text
+    ctx.user_data.pop("review_choices", None)
     return await continue_add(update, ctx, ADDING_REVIEW)
+
+
+async def add_review_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    _, raw = query.data.split(":", 1)
+    choices = usable_review_choices(ctx.user_data.get("review_choices"))
+    try:
+        index = int(raw)
+    except ValueError:
+        return ADDING_REVIEW
+    if not isinstance(choices, list) or index < 0 or index >= len(choices):
+        return ADDING_REVIEW
+    chosen = choices[index]
+    url = chosen.get("url") if isinstance(chosen, dict) else None
+    if not isinstance(url, str) or not is_valid_url(url):
+        return ADDING_REVIEW
+    ctx.user_data.setdefault("new_book", {})["review_link"] = url
+    ctx.user_data.pop("review_choices", None)
+    return await continue_add(update, ctx, ADDING_REVIEW, edit=True)
 
 
 async def add_original_language_skip(

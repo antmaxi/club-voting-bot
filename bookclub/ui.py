@@ -266,6 +266,71 @@ def add_back_keyboard(lang: str) -> InlineKeyboardMarkup:
     return add_nav_keyboard(lang, show_back=True, show_forward=False)
 
 
+def usable_review_choices(choices: object) -> list[dict[str, Any]]:
+    if not isinstance(choices, list):
+        return []
+    usable: list[dict[str, Any]] = []
+    for item in choices:
+        if isinstance(item, dict):
+            url = item.get("url")
+            if isinstance(url, str) and url.strip():
+                usable.append(item)
+    return usable
+
+
+def review_choice_label(choice: dict[str, Any]) -> str:
+    """Button text: rating count, edition detail, then author."""
+    bits: list[str] = []
+    count = choice.get("review_count")
+    if isinstance(count, int) and not isinstance(count, bool):
+        bits.append(str(count))
+    detail = str(choice.get("detail") or "").strip()
+    author = str(choice.get("author") or "").strip()
+    if detail:
+        bits.append(detail)
+    if author and author.casefold() not in detail.casefold():
+        bits.append(author)
+    if not bits:
+        title = str(choice.get("title") or "").strip()
+        bits.append(title or str(choice.get("url") or ""))
+    text = " · ".join(bits)
+    if len(text) > 60:
+        return text[:59] + "…"
+    return text
+
+
+def review_choice_text(lang: str, choices: list[dict[str, Any]]) -> str:
+    lines = [s(lang, "review_choice_prompt"), ""]
+    for index, choice in enumerate(choices, 1):
+        url = h(str(choice.get("url") or ""))
+        label = h(review_choice_label(choice))
+        lines.append(f'{index}. <a href="{url}">{label}</a>')
+    lines.append("")
+    lines.append(s(lang, "ask_review"))
+    lines.append(s(lang, "add_back_hint"))
+    return "\n".join(lines)
+
+
+def review_choice_keyboard(
+    lang: str, choices: list[dict[str, Any]], *, show_save: bool = False
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, choice in enumerate(choices):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    review_choice_label(choice),
+                    callback_data=f"add_review_pick:{index}",
+                )
+            ]
+        )
+    nav = add_nav_buttons(lang, show_back=True, show_forward=False)
+    if nav:
+        rows.append(nav)
+    rows.extend(add_wizard_footer(lang, show_save=show_save))
+    return InlineKeyboardMarkup(rows)
+
+
 def fmt_dt_utc(dt: datetime) -> str:
     """Format a datetime in the configured display timezone (default UTC+2).
 

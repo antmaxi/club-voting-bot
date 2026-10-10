@@ -39,6 +39,7 @@ from bookclub.handlers.add_flow import (
     typed_add_text,
 )
 from bookclub.notifications import vote_reminder_job
+from bookclub.review_page import CatalogHit
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
 
@@ -668,7 +669,7 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.text = "My Book"
         with (
             patch("bookclub.handlers.add.suggest_book_fields") as mocked,
-            patch("bookclub.handlers.add.suggest_review_link") as mocked_link,
+            patch("bookclub.handlers.add.suggest_review_choices") as mocked_link,
         ):
             await bot.add_title(self.update, self.ctx)
         mocked.assert_not_called()
@@ -691,10 +692,15 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIn(bot.CONV_CANCEL, data)
 
     @patch.object(cfg, "LLM_API_KEY", "sk-test")
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_add_ai_yes_applies_suggestions(self, mock_suggest):
         mock_suggest.return_value = (
-            "https://en.wikipedia.org/wiki/War_and_Peace",
+            [
+                CatalogHit(
+                    url="https://en.wikipedia.org/wiki/War_and_Peace",
+                    title="War and Peace",
+                )
+            ],
             None,
         )
         self.ctx.user_data["new_book"] = {"title": "War and Peace"}
@@ -717,8 +723,59 @@ class TestAddConversation(BotHandlerTestCase):
         mock_suggest.assert_called_once()
         self.assertEqual(mock_suggest.call_args[0][0], "War and Peace")
 
+    @patch("bookclub.handlers.add.suggest_fields_after_review")
     @patch.object(cfg, "LLM_API_KEY", "sk-test")
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
+    async def test_add_ai_same_title_asks_to_choose(self, mock_suggest, mock_from_page):
+        popular = "https://www.litres.ru/book/popular/"
+        quiet = "https://www.litres.ru/book/quiet/"
+        mock_suggest.return_value = (
+            [
+                CatalogHit(
+                    url=popular,
+                    title="Мастер и Маргарита",
+                    review_count=3127,
+                    author="Михаил Булгаков",
+                    detail="Иллюстрированное издание",
+                ),
+                CatalogHit(
+                    url=quiet,
+                    title="Мастер и Маргарита",
+                    review_count=18,
+                    author="Михаил Булгаков",
+                ),
+            ],
+            None,
+        )
+        mock_from_page.return_value = ({}, None)
+        self.ctx.user_data["new_book"] = {"title": "Мастер и Маргарита"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        self._callback_query("add_ai:yes")
+        state = await bot.add_ai_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_REVIEW)
+        self.assertNotIn("review_link", self.ctx.user_data["new_book"])
+        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        prompt = next(t for t in texts if popular in t)
+        self.assertLess(prompt.index("3127"), prompt.index("18"))
+        self.assertIn("Choose one", prompt)
+        markup = next(
+            c[1]["reply_markup"]
+            for c in self.message.reply_text.call_args_list
+            if popular in (c[0][0] if c[0] else "")
+        )
+        data = self._keyboard_callback_data(markup)
+        self.assertEqual(data[0], "add_review_pick:0")
+        self.assertEqual(data[1], "add_review_pick:1")
+        self.assertIn("3127", markup.inline_keyboard[0][0].text)
+        self._callback_query("add_review_pick:0")
+        state = await bot.add_review_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(self.ctx.user_data["new_book"]["review_link"], popular)
+        self.assertNotIn("review_choices", self.ctx.user_data)
+        mock_from_page.assert_called_once()
+
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_add_ai_no_skips_llm(self, mock_suggest):
         self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
         self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
@@ -730,9 +787,9 @@ class TestAddConversation(BotHandlerTestCase):
         q.edit_message_text.assert_called()
         self.assertFalse(self.ctx.user_data.get("llm_add"))
 
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_add_ai_yes_without_llm_still_advances(self, mock_suggest):
-        mock_suggest.return_value = (None, "not_configured")
+        mock_suggest.return_value = ([], "not_configured")
         self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
         self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
         self._callback_query("add_ai:yes")
@@ -745,9 +802,9 @@ class TestAddConversation(BotHandlerTestCase):
         ]
         self.assertTrue(any("LLM_API_KEY" in t for t in texts + q_texts))
 
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_add_ai_llm_failure_still_advances(self, mock_suggest):
-        mock_suggest.return_value = (None, "auth: HTTP 401: Incorrect API key")
+        mock_suggest.return_value = ([], "auth: HTTP 401: Incorrect API key")
         self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
         self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
         self._callback_query("add_ai:yes")
@@ -765,10 +822,10 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIn("401", failed_text)
         self.assertIsNone(failed[0].kwargs.get("parse_mode"))
 
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_add_ai_llm_failure_keeps_htmlish_detail(self, mock_suggest):
         mock_suggest.return_value = (
-            None,
+            [],
             'bad_request: HTTP 400: {"error":"<invalid>"}',
         )
         self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
@@ -1211,10 +1268,15 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(state, bot.ADDING_START)
 
     @patch.object(cfg, "LLM_API_KEY", "sk-test")
-    @patch("bookclub.handlers.add.suggest_review_link")
+    @patch("bookclub.handlers.add.suggest_review_choices")
     async def test_start_ai_choice_skips_second_ask(self, mock_suggest):
         mock_suggest.return_value = (
-            "https://en.wikipedia.org/wiki/Pride_and_Prejudice",
+            [
+                CatalogHit(
+                    url="https://en.wikipedia.org/wiki/Pride_and_Prejudice",
+                    title="Pride and Prejudice",
+                )
+            ],
             None,
         )
         self.ctx.user_data["new_book"] = {}

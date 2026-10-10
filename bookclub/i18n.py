@@ -318,6 +318,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "fiction_btn": "📖 Fiction",
         "nonfiction_btn": "📰 Non-fiction",
         "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
+        "review_choice_prompt": (
+            "Several pages share this title. Choose one — most ratings first — "
+            "or paste your own link:"
+        ),
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
         "ask_original_language": "🌐 <b>Original language</b> — pick one:",
         "ask_original_language_other": "🌐 <b>Original language</b> — type the language name:",
@@ -634,6 +638,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "fiction_btn": "📖 Худ. литература",
         "nonfiction_btn": "📰 Нехуд. литература",
         "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
+        "review_choice_prompt": (
+            "Несколько страниц с таким названием. Выберите одну — сначала с "
+            "большим числом оценок — или вставьте свою ссылку:"
+        ),
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
         "ask_original_language": "🌐 <b>Язык оригинала</b> — выберите:",
         "ask_original_language_other": "🌐 <b>Язык оригинала</b> — введите название:",
@@ -955,6 +963,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "fiction_btn": "📖 Belletristik",
         "nonfiction_btn": "📰 Sachbuch",
         "ask_review": "🔗 Füge den <b>Link zur Rezension</b> ein (muss mit http:// oder https:// beginnen):",
+        "review_choice_prompt": (
+            "Mehrere Seiten haben denselben Titel. Wähle eine — die mit den "
+            "meisten Bewertungen zuerst — oder füge einen eigenen Link ein:"
+        ),
         "invalid_review": "⚠️ Das sieht nicht nach einer gültigen URL aus. Bitte einen Link einfügen, der mit http:// oder https:// beginnt:",
         "ask_original_language": "🌐 <b>Originalsprache</b> — eine wählen:",
         "ask_original_language_other": "🌐 <b>Originalsprache</b> — Name eingeben:",

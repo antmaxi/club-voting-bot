@@ -848,6 +848,33 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(dest.user_data["new_book"]["language_levels"], {"A1", "B2"})
         self.assertTrue(dest.user_data["llm_add"])
 
+    def test_serialize_add_draft_keeps_review_choices(self):
+        from bookclub.handlers.add_flow import apply_add_draft, serialize_add_draft
+
+        ctx = MagicMock()
+        ctx.user_data = {
+            "new_book": {"title": "T"},
+            "add_state": bot.ADDING_REVIEW,
+            "review_choices": [
+                {
+                    "url": "https://www.litres.ru/book/a/",
+                    "title": "T",
+                    "review_count": 12,
+                    "author": "Author",
+                    "detail": "Illustrated",
+                }
+            ],
+        }
+        payload = serialize_add_draft(ctx)
+        self.assertEqual(payload["review_choices"][0]["review_count"], 12)
+        dest = MagicMock()
+        dest.user_data = {}
+        apply_add_draft(dest, payload, 3)
+        self.assertEqual(
+            dest.user_data["review_choices"][0]["url"],
+            "https://www.litres.ru/book/a/",
+        )
+
     def test_db_get_users_with_setting_empty(self):
         result = bot.db_get_users_with_setting("notify_new_books", 1)
         self.assertEqual(result, [])

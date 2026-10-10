@@ -20,9 +20,10 @@ from bookclub.original_languages import (
     original_language_code_for_stored,
 )
 from bookclub.review_page import (
+    CatalogHit,
+    catalog_review_options,
     fetch_review_text,
     first_verified_review_url,
-    pick_catalog_review_url,
     prefers_russian_catalog,
 )
 from bookclub.ui import is_valid_url
@@ -292,26 +293,27 @@ def suggest_book_fields(
         return {}, f"unusable_json: {e}"
 
 
-def suggest_review_link(
+def suggest_review_choices(
     title: str,
     *,
     lang: str,
     entity: str | None = None,
-) -> tuple[str | None, str | None]:
-    """Return (verified catalog URL or None, error or None).
+) -> tuple[list[CatalogHit], str | None]:
+    """Return (catalog pages, error or None).
 
     Prefers live catalog search (LitRes / Kinopoisk for Russian-language
     works, Goodreads / IMDb otherwise, then Wikipedia) over model-invented
-    IDs. LLM candidates are fetched and dropped when the page text is not about
-    ``title``.
+    IDs. Several pages that share the searched title are all returned, most
+    ratings first. LLM candidates are fetched and dropped when the page text
+    is not about ``title``.
     """
     club_entity = entity or CLUB_ENTITY
     lang = suggestion_catalog_lang(title, lang)
-    catalog = pick_catalog_review_url(title, lang=lang, entity=club_entity)
-    if catalog:
-        return catalog, None
+    options = catalog_review_options(title, lang=lang, entity=club_entity)
+    if options:
+        return options, None
     if not config.llm_configured():
-        return None, "not_configured"
+        return [], "not_configured"
     try:
         content = chat_completion(
             _review_link_messages(title, lang=lang, entity=club_entity)
@@ -320,12 +322,27 @@ def suggest_review_link(
         candidates = _review_link_candidates(raw)
     except LlmRequestError as e:
         _log_suggestion_failure(e.kind, title, e.detail)
-        return None, str(e)
+        return [], str(e)
     except (ValueError, TypeError, json.JSONDecodeError) as e:
         _log_suggestion_failure("unusable_json", title, str(e))
-        return None, f"unusable_json: {e}"
+        return [], f"unusable_json: {e}"
     verified = first_verified_review_url(candidates, title)
-    return verified, None
+    if not verified:
+        return [], None
+    return [CatalogHit(url=verified, title=title)], None
+
+
+def suggest_review_link(
+    title: str,
+    *,
+    lang: str,
+    entity: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Return (best verified catalog URL or None, error or None)."""
+    choices, error = suggest_review_choices(title, lang=lang, entity=entity)
+    if choices:
+        return choices[0].url, None
+    return None, error
 
 
 def suggest_fields_after_review(

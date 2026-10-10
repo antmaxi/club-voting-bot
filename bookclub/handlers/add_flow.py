@@ -43,6 +43,9 @@ from bookclub.ui import (
     fiction_keyboard,
     h,
     original_language_keyboard,
+    review_choice_keyboard,
+    review_choice_text,
+    usable_review_choices,
 )
 
 _TEXT_EDIT_STATES = frozenset(
@@ -321,6 +324,7 @@ def serialize_add_draft(ctx: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
         "llm_filled_keys": sorted(filled) if isinstance(filled, set) else [],
         "llm_extracted_review": ctx.user_data.get("llm_extracted_review"),
         "add_from_start": bool(ctx.user_data.get("add_from_start")),
+        "review_choices": usable_review_choices(ctx.user_data.get("review_choices")),
     }
 
 
@@ -345,6 +349,11 @@ def apply_add_draft(
     extracted = payload.get("llm_extracted_review")
     if extracted:
         ctx.user_data["llm_extracted_review"] = extracted
+    choices = usable_review_choices(payload.get("review_choices"))
+    if choices:
+        ctx.user_data["review_choices"] = choices
+    else:
+        ctx.user_data.pop("review_choices", None)
 
 
 def persist_add_draft_if_saved(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -431,6 +440,13 @@ def typed_add_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return text
 
 
+def pending_review_choices(ctx: ContextTypes.DEFAULT_TYPE, nb: dict) -> list[dict]:
+    """Same-title catalog pages still waiting for the user to pick one."""
+    if nb.get("review_link"):
+        return []
+    return usable_review_choices(ctx.user_data.get("review_choices"))
+
+
 def markup_for_add(
     ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict | None = None
 ) -> InlineKeyboardMarkup:
@@ -444,6 +460,9 @@ def markup_for_add(
         use_inline=bot_supports_inline(ctx),
         show_save=bool(nb.get("title")),
         show_title_back=bool(ctx.user_data.get("add_from_start")),
+        review_choices=(
+            pending_review_choices(ctx, nb) if state == ADDING_REVIEW else []
+        ),
     )
 
 
@@ -452,6 +471,10 @@ def add_field_is_set(nb: dict, state: int) -> bool:
 
 
 def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) -> str:
+    if state == ADDING_REVIEW:
+        choices = pending_review_choices(ctx, nb)
+        if choices:
+            return review_choice_text(get_lang(ctx), choices)
     key = _prompt_key_for_state(state)
     if key is None:
         return ""
@@ -488,6 +511,7 @@ def add_prompt_markup(
     use_inline: bool = False,
     show_save: bool = False,
     show_title_back: bool = False,
+    review_choices: list[dict] | None = None,
 ) -> InlineKeyboardMarkup:
     can_forward = add_field_is_set(nb, state)
     show_back = state != ADDING_TITLE
@@ -526,6 +550,8 @@ def add_prompt_markup(
             show_add_forward=can_forward,
             show_save=show_save,
         )
+    if state == ADDING_REVIEW and review_choices:
+        return review_choice_keyboard(lang, review_choices, show_save=show_save)
     if state in (
         ADDING_AUTHOR,
         ADDING_PAGES,
