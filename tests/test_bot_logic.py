@@ -613,6 +613,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(imported["pages"], 412)
         self.assertEqual(imported["fiction"], 1)
         self.assertEqual(imported["review_link"], "https://example.com/review")
+        self.assertEqual(imported["sources"], "")
         self.assertEqual(imported["description"], "Sci-fi classic")
         self.assertEqual(imported["discussed"], 1)
         self.assertEqual(imported["discussed_at"], "2025-06-01")
@@ -620,6 +621,52 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(imported["added_by_name"], "Alice")
         self.assertEqual(imported["added_by_username"], "alice")
         self.assertEqual(imported["vote_count"], 0)
+
+    def test_sources_roundtrip_and_card(self):
+        urls = [
+            "https://www.litres.ru/book/one/",
+            "https://en.wikipedia.org/wiki/Dune",
+            "https://www.litres.ru/book/two/",
+        ]
+        book_id = bot.db_add_book(
+            "Dune",
+            "Herbert",
+            412,
+            True,
+            "",
+            "Sci-fi",
+            1,
+            "u",
+            sources=bot.encode_sources(urls),
+        )
+        stored = bot.db_get_book(book_id)
+        self.assertEqual(bot.decode_sources(stored["sources"]), urls)
+        card = bot.book_card(stored, "en")
+        self.assertIn("Sources", card)
+        self.assertIn("litres.ru/one", card)
+        self.assertIn("litres.ru/two", card)
+        self.assertIn(">en.wikipedia.org<", card)
+        payload = bot.book_to_export_payload(stored)
+        parsed, _entity = bot.parse_book_import(payload)
+        self.assertEqual(bot.decode_sources(parsed["sources"]), urls)
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
+            hidden = bot.book_card(stored, "en")
+        self.assertNotIn("Sources", hidden)
+        self.assertNotIn("litres.ru", hidden)
+
+    def test_parse_source_links(self):
+        self.assertEqual(bot.parse_source_links("/skip"), [])
+        self.assertEqual(
+            bot.parse_source_links("https://a.example/1\nhttps://a.example/1"),
+            ["https://a.example/1"],
+        )
+        with self.assertRaises(bot.SourceParseError):
+            bot.parse_source_links("not-a-url")
+        with self.assertRaises(bot.SourceParseError):
+            bot.parse_source_links(
+                "https://a.example/1 https://a.example/2 "
+                "https://a.example/3 https://a.example/4"
+            )
 
     def test_parse_book_import_rejects_bad_json(self):
         with self.assertRaises(ValueError):
@@ -1448,8 +1495,10 @@ class TestEntryFields(unittest.TestCase):
 
     def test_add_next_review_comes_after_title(self):
         self.assertEqual(add_next_state(bot.ADDING_TITLE), bot.ADDING_REVIEW)
-        self.assertEqual(add_next_state(bot.ADDING_REVIEW), bot.ADDING_AUTHOR)
-        self.assertEqual(add_previous_state(bot.ADDING_AUTHOR), bot.ADDING_REVIEW)
+        self.assertEqual(add_next_state(bot.ADDING_REVIEW), bot.ADDING_SOURCES)
+        self.assertEqual(add_next_state(bot.ADDING_SOURCES), bot.ADDING_AUTHOR)
+        self.assertEqual(add_previous_state(bot.ADDING_AUTHOR), bot.ADDING_SOURCES)
+        self.assertEqual(add_previous_state(bot.ADDING_SOURCES), bot.ADDING_REVIEW)
 
     def test_add_previous_from_ai_choose_is_title(self):
         self.assertEqual(add_previous_state(bot.ADDING_AI_CHOOSE), bot.ADDING_TITLE)

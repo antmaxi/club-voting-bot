@@ -17,10 +17,14 @@ from bookclub.config import (
     entry_field_enabled,
 )
 from bookclub.db import (
+    SourceParseError,
     db_delete_book,
     db_get_book,
     db_get_books_metadata,
     db_update_book_field,
+    decode_sources,
+    encode_sources,
+    parse_source_links,
 )
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, get_lang, s, tr
@@ -48,6 +52,7 @@ _EDIT_FIELD_ORDER = [
     "pages",
     "fiction",
     "review_link",
+    "sources",
     "original_language",
     "creation_year",
     "language_levels",
@@ -77,6 +82,13 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
         )
     if field == "review_link":
         return book["review_link"] or ("—" if lang == "en" else "—")
+    if field == "sources":
+        try:
+            raw = book["sources"]
+        except (KeyError, IndexError):
+            raw = ""
+        urls = decode_sources(raw)
+        return " · ".join(urls) if urls else "—"
     if field == "description":
         return book["description"] or ("—" if lang == "en" else "—")
     if field == "original_language":
@@ -153,6 +165,7 @@ async def _ask_edit_field(
         ctx.user_data.pop("edit_fields", None)
         return ConversationHandler.END
 
+    ctx.user_data["edit_input"] = None
     field = fields[0]
     book = require_book(ctx.user_data["edit_book_id"])
     field_key = f"field_{field}" if field != "review_link" else "field_review"
@@ -273,7 +286,25 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return EDITING_FIELD  # handled by edit_language_levels_cb
 
-    field_name = s(lang, f"field_{field}" if field != "review_link" else "field_review")
+    if field == "review_link":
+        ctx.user_data["edit_input"] = "clearable"
+        await query.edit_message_text(
+            tr(ctx, "ask_review"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(lang),
+        )
+        return EDITING_FIELD
+    if field == "sources":
+        ctx.user_data["edit_input"] = "clearable"
+        await query.edit_message_text(
+            tr(ctx, "ask_sources"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(lang),
+        )
+        return EDITING_FIELD
+
+    field_name = s(lang, f"field_{field}")
+    ctx.user_data["edit_input"] = "required"
     await query.edit_message_text(
         tr(ctx, "edit_ask_new", field=field_name),
         parse_mode=PM,
@@ -382,14 +413,27 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
             return EDITING_FIELD
         value = int(text)
     elif field == "review_link":
-        if not is_valid_url(text):
+        if text == "/skip":
+            value = ""
+        elif not is_valid_url(text):
             await update.message.reply_text(
                 tr(ctx, "edit_invalid_url"),
                 parse_mode=PM,
                 reply_markup=cancel_keyboard(get_lang(ctx)),
             )
             return EDITING_FIELD
-        value = text
+        else:
+            value = text
+    elif field == "sources":
+        try:
+            value = encode_sources(parse_source_links(text))
+        except SourceParseError:
+            await update.message.reply_text(
+                tr(ctx, "invalid_sources"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
+            )
+            return EDITING_FIELD
     elif field == "creation_year":
         try:
             value = parse_optional_creation_year(text)
@@ -412,6 +456,24 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
     ctx.user_data["edit_changes"][field] = value
     ctx.user_data["edit_fields"].pop(0)
+    ctx.user_data["edit_input"] = None
+    return await _ask_edit_field(update, ctx, is_callback=False)
+
+
+async def edit_skip_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Clear the review link or sources while editing. Other fields stay required."""
+    if ctx.user_data.get("edit_input") != "clearable":
+        if ctx.user_data.get("edit_input") == "required":
+            await update.message.reply_text(
+                tr(ctx, "edit_cannot_skip"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
+            )
+        return EDITING_FIELD
+    field = ctx.user_data["edit_fields"][0]
+    ctx.user_data["edit_changes"][field] = ""
+    ctx.user_data["edit_fields"].pop(0)
+    ctx.user_data["edit_input"] = None
     return await _ask_edit_field(update, ctx, is_callback=False)
 
 

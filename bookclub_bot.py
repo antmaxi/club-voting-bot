@@ -4,8 +4,9 @@ Club Voting Bot — EN/RU/DE
 =========================================
 Fields per book:
   - title (always required)
-  - optional via ENTRY_FIELDS: author, pages, fiction, review_link,
-    original_language, creation_year, language_levels, description
+  - optional via ENTRY_FIELDS: author, pages, fiction, review_link, sources
+    (up to 3 links), original_language, creation_year, language_levels, description
+  - review link and sources can be skipped on /add
   - added_at, added_by
   - discussed (flag, admin-only), discussed_at (date)
 

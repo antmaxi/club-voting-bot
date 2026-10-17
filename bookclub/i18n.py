@@ -317,12 +317,21 @@ T: dict[str, dict[str, TranslationValue]] = {
         "ask_fiction": "📂 Is it <b>Fiction</b> or <b>Non-fiction</b>?",
         "fiction_btn": "📖 Fiction",
         "nonfiction_btn": "📰 Non-fiction",
-        "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
+        "ask_review": (
+            "🔗 Paste the <b>link to a review</b> (http:// or https://), or /skip:"
+        ),
+        "ask_sources": (
+            "📎 Send up to <b>3 source links</b> (one per line), or /skip:"
+        ),
         "review_choice_prompt": (
             "Several pages share this title. Choose one — most ratings first — "
-            "or paste your own link:"
+            "paste your own link, or skip:"
         ),
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
+        "invalid_sources": (
+            "⚠️ Send 1–3 links that start with http:// or https:// "
+            "(one per line), or /skip:"
+        ),
         "ask_original_language": "🌐 <b>Original language</b> — pick one:",
         "ask_original_language_other": "🌐 <b>Original language</b> — type the language name:",
         "orig_lang_ru": "🇷🇺 Russian",
@@ -373,6 +382,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "creation_year_label": "Year",
         "language_levels_label": "Language level",
         "review_label": "Review",
+        "sources_label": "Sources",
         "cancel_btn": "❌ Cancel",
         "edit_field_prompt": "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
         "edit_yes_btn": "✏️ Yes, change it",
@@ -381,12 +391,14 @@ T: dict[str, dict[str, TranslationValue]] = {
         "edit_done": "✅ {updated}",
         "edit_invalid_pages": "⚠️ Must be a positive number. Send again:",
         "edit_invalid_url": "⚠️ Must start with http:// or https://. Send again:",
+        "edit_cannot_skip": "⚠️ This field can't be left empty. Send a value:",
         "edit_invalid_creation_year": "⚠️ Must be a 4-digit year (e.g. 1984). Send again:",
         "field_title": "Title",
         "field_author": "{Author}",
         "field_pages": "Pages",
         "field_fiction": "Fiction / Non-fiction",
         "field_review": "Review link",
+        "field_sources": "Sources",
         "field_description": "Description",
         "field_original_language": "Original language",
         "field_creation_year": "Year of creation",
@@ -637,12 +649,21 @@ T: dict[str, dict[str, TranslationValue]] = {
         "ask_fiction": "📂 Это <b>художественная</b> или <b>нехудожественная</b> литература?",
         "fiction_btn": "📖 Худ. литература",
         "nonfiction_btn": "📰 Нехуд. литература",
-        "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
+        "ask_review": (
+            "🔗 Вставьте <b>ссылку на рецензию</b> (http:// или https://) или /skip:"
+        ),
+        "ask_sources": (
+            "📎 Пришлите до <b>3 ссылок на источники</b> (по одной в строке) или /skip:"
+        ),
         "review_choice_prompt": (
             "Несколько страниц с таким названием. Выберите одну — сначала с "
-            "большим числом оценок — или вставьте свою ссылку:"
+            "большим числом оценок — вставьте свою ссылку или пропустите:"
         ),
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
+        "invalid_sources": (
+            "⚠️ Пришлите от 1 до 3 ссылок, начинающихся с http:// или https:// "
+            "(по одной в строке), или /skip:"
+        ),
         "ask_original_language": "🌐 <b>Язык оригинала</b> — выберите:",
         "ask_original_language_other": "🌐 <b>Язык оригинала</b> — введите название:",
         "orig_lang_ru": "🇷🇺 Русский",
@@ -693,6 +714,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "creation_year_label": "Год",
         "language_levels_label": "Уровень языка",
         "review_label": "Рецензия",
+        "sources_label": "Источники",
         "cancel_btn": "❌ Отмена",
         "edit_field_prompt": "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
         "edit_yes_btn": "✏️ Да, изменить",
@@ -701,12 +723,14 @@ T: dict[str, dict[str, TranslationValue]] = {
         "edit_done": "✅ {updated}",
         "edit_invalid_pages": "⚠️ Должно быть положительным числом. Отправьте снова:",
         "edit_invalid_url": "⚠️ Должна начинаться с http:// или https://. Отправьте снова:",
+        "edit_cannot_skip": "⚠️ Это поле нельзя оставить пустым. Отправьте значение:",
         "edit_invalid_creation_year": "⚠️ Должен быть год из 4 цифр (например, 1984). Отправьте снова:",
         "field_title": "Название",
         "field_author": "{Author}",
         "field_pages": "Страниц",
         "field_fiction": "Fiction / Non-fiction",
         "field_review": "Ссылка на рецензию",
+        "field_sources": "Источники",
         "field_description": "Описание",
         "field_original_language": "Язык оригинала",
         "field_creation_year": "Год создания",
@@ -962,12 +986,21 @@ T: dict[str, dict[str, TranslationValue]] = {
         "ask_fiction": "📂 Ist es <b>Belletristik</b> oder ein <b>Sachbuch</b>?",
         "fiction_btn": "📖 Belletristik",
         "nonfiction_btn": "📰 Sachbuch",
-        "ask_review": "🔗 Füge den <b>Link zur Rezension</b> ein (muss mit http:// oder https:// beginnen):",
+        "ask_review": (
+            "🔗 Füge den <b>Link zur Rezension</b> ein (http:// oder https://) oder /skip:"
+        ),
+        "ask_sources": (
+            "📎 Sende bis zu <b>3 Quellenlinks</b> (einen pro Zeile) oder /skip:"
+        ),
         "review_choice_prompt": (
             "Mehrere Seiten haben denselben Titel. Wähle eine — die mit den "
-            "meisten Bewertungen zuerst — oder füge einen eigenen Link ein:"
+            "meisten Bewertungen zuerst — füge einen eigenen Link ein oder überspringe:"
         ),
         "invalid_review": "⚠️ Das sieht nicht nach einer gültigen URL aus. Bitte einen Link einfügen, der mit http:// oder https:// beginnt:",
+        "invalid_sources": (
+            "⚠️ Sende 1–3 Links, die mit http:// oder https:// beginnen "
+            "(einen pro Zeile), oder /skip:"
+        ),
         "ask_original_language": "🌐 <b>Originalsprache</b> — eine wählen:",
         "ask_original_language_other": "🌐 <b>Originalsprache</b> — Name eingeben:",
         "orig_lang_ru": "🇷🇺 Russisch",
@@ -1018,6 +1051,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "creation_year_label": "Jahr",
         "language_levels_label": "Sprachniveau",
         "review_label": "Rezension",
+        "sources_label": "Quellen",
         "cancel_btn": "❌ Abbrechen",
         "edit_field_prompt": "✏️ <b>{field}</b>\nAktueller Wert: <i>{value}</i>\n\nDieses Feld ändern?",
         "edit_yes_btn": "✏️ Ja, ändern",
@@ -1026,12 +1060,14 @@ T: dict[str, dict[str, TranslationValue]] = {
         "edit_done": "✅ {updated}",
         "edit_invalid_pages": "⚠️ Muss eine positive Zahl sein. Nochmal senden:",
         "edit_invalid_url": "⚠️ Muss mit http:// oder https:// beginnen. Nochmal senden:",
+        "edit_cannot_skip": "⚠️ Dieses Feld darf nicht leer bleiben. Sende einen Wert:",
         "edit_invalid_creation_year": "⚠️ Muss ein 4-stelliges Jahr sein (z. B. 1984). Nochmal senden:",
         "field_title": "Titel",
         "field_author": "{Author}",
         "field_pages": "Seiten",
         "field_fiction": "Belletristik / Sachbuch",
         "field_review": "Rezensionslink",
+        "field_sources": "Quellen",
         "field_description": "Beschreibung",
         "field_original_language": "Originalsprache",
         "field_creation_year": "Entstehungsjahr",

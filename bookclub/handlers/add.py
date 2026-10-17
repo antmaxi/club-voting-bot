@@ -19,6 +19,7 @@ from bookclub.config import (
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_SOURCES,
     ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
@@ -27,13 +28,17 @@ from bookclub.config import (
     llm_configured,
 )
 from bookclub.db import (
+    SourceParseError,
     db_add_book,
     db_cast_vote,
     db_delete_add_draft,
     db_get_add_draft,
     db_get_book,
     db_list_add_drafts,
+    decode_sources,
+    encode_sources,
     find_similar_book_titles,
+    parse_source_links,
 )
 from bookclub.handlers.add_flow import (
     add_next_state,
@@ -340,7 +345,9 @@ async def apply_llm_from_review_page(
     if ctx.user_data.get("llm_extracted_review") == url:
         return
     remaining = frozenset(
-        name for name in ENTRY_FIELDS if name != "review" and entry_field_enabled(name)
+        name
+        for name in ENTRY_FIELDS
+        if name not in {"review", "sources"} and entry_field_enabled(name)
     )
     if not remaining:
         ctx.user_data["llm_extracted_review"] = url
@@ -472,8 +479,27 @@ async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return await continue_add(update, ctx, ADDING_FICTION, edit=True)
 
 
+async def _clear_review_and_continue(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    ctx.user_data.setdefault("new_book", {})["review_link"] = ""
+    ctx.user_data.pop("review_choices", None)
+    return await continue_add(
+        update, ctx, ADDING_REVIEW, edit=bool(update.callback_query)
+    )
+
+
+async def add_review_skip_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+    return await _clear_review_and_continue(update, ctx)
+
+
 async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = typed_add_text(update, ctx)
+    if text == "/skip":
+        return await _clear_review_and_continue(update, ctx)
     nb = ctx.user_data["new_book"]
     if not is_valid_url(text):
         await update.message.reply_text(
@@ -506,6 +532,40 @@ async def add_review_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     ctx.user_data.setdefault("new_book", {})["review_link"] = url
     ctx.user_data.pop("review_choices", None)
     return await continue_add(update, ctx, ADDING_REVIEW, edit=True)
+
+
+async def _store_sources_and_continue(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, urls: list[str]
+) -> int:
+    ctx.user_data.setdefault("new_book", {})["sources"] = urls
+    return await continue_add(
+        update, ctx, ADDING_SOURCES, edit=bool(update.callback_query)
+    )
+
+
+async def add_sources_skip_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+    return await _store_sources_and_continue(update, ctx, [])
+
+
+async def add_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    text = typed_add_text(update, ctx)
+    if text == "/skip":
+        return await _store_sources_and_continue(update, ctx, [])
+    nb = ctx.user_data["new_book"]
+    try:
+        urls = parse_source_links(text)
+    except SourceParseError:
+        await update.message.reply_text(
+            f"{tr(ctx, 'invalid_sources')}\n\n{build_add_prompt_text(ctx, ADDING_SOURCES, nb)}",
+            reply_markup=markup_for_add(ctx, ADDING_SOURCES, nb),
+            parse_mode=PM,
+        )
+        ctx.user_data["add_state"] = ADDING_SOURCES
+        return ADDING_SOURCES
+    return await _store_sources_and_continue(update, ctx, urls)
 
 
 async def add_original_language_skip(
@@ -654,6 +714,7 @@ async def complete_new_book(
         original_language=nb.get("original_language") or None,
         creation_year=nb.get("creation_year"),
         language_levels=language_levels,
+        sources=encode_sources(decode_sources(nb.get("sources"))),
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")

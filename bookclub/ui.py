@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from telegram import Bot, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import InlineKeyboardButtonLimit
@@ -24,6 +25,7 @@ from bookclub.db import (
     club_user_has_shown_name,
     db_meeting_user_suggestions,
     db_upsert_club_user,
+    decode_sources,
     format_club_user_display,
 )
 from bookclub.i18n import PM, T, get_lang, s, tr, vote_label_text
@@ -247,6 +249,8 @@ def add_nav_keyboard(
     edit_value: str | None = None,
     use_inline: bool = False,
     show_save: bool = False,
+    show_skip: bool = False,
+    skip_callback: str = "add_skip",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row = add_nav_buttons(
@@ -258,6 +262,14 @@ def add_nav_keyboard(
     )
     if row:
         rows.append(row)
+    if show_skip:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "orig_lang_skip_btn"), callback_data=skip_callback
+                )
+            ]
+        )
     rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
 
@@ -312,7 +324,11 @@ def review_choice_text(lang: str, choices: list[dict[str, Any]]) -> str:
 
 
 def review_choice_keyboard(
-    lang: str, choices: list[dict[str, Any]], *, show_save: bool = False
+    lang: str,
+    choices: list[dict[str, Any]],
+    *,
+    show_save: bool = False,
+    show_skip: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for index, choice in enumerate(choices):
@@ -324,11 +340,48 @@ def review_choice_keyboard(
                 )
             ]
         )
+    if show_skip:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "orig_lang_skip_btn"), callback_data="add_review:skip"
+                )
+            ]
+        )
     nav = add_nav_buttons(lang, show_back=True, show_forward=False)
     if nav:
         rows.append(nav)
     rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
+
+
+def source_link_labels(urls: list[str]) -> list[str]:
+    """Short link text: hostname, plus a path tail when hosts collide."""
+    parsed = [urlparse(url) for url in urls]
+    hosts = [
+        (item.hostname or "").removeprefix("www.") or url
+        for item, url in zip(parsed, urls, strict=True)
+    ]
+    labels: list[str] = []
+    for host, item in zip(hosts, parsed, strict=True):
+        label = host
+        if hosts.count(host) > 1:
+            path = (item.path or "").rstrip("/")
+            tail = path.rsplit("/", 1)[-1] if path else ""
+            if tail:
+                label = f"{host}/{tail}"
+        if len(label) > 48:
+            label = label[:47] + "…"
+        labels.append(label)
+    return labels
+
+
+def book_source_urls(book: BookLike) -> list[str]:
+    try:
+        raw = book["sources"]
+    except (KeyError, IndexError):
+        return []
+    return [url for url in decode_sources(raw) if is_valid_url(url)]
 
 
 def fmt_dt_utc(dt: datetime) -> str:
@@ -407,6 +460,16 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
         lines.append(
             f'🔗 <a href="{h(book["review_link"])}">{h(s(lang, "review_label"))}</a>'
         )
+    if entry_field_enabled("sources"):
+        source_urls = book_source_urls(book)
+        if source_urls:
+            links = [
+                f'<a href="{h(url)}">{h(label)}</a>'
+                for url, label in zip(
+                    source_urls, source_link_labels(source_urls), strict=True
+                )
+            ]
+            lines.append(f"📎 {h(s(lang, 'sources_label'))}: " + " · ".join(links))
     if entry_field_enabled("description") and book["description"]:
         lines += ["", f"<i>{h(book['description'])}</i>"]
     meta = (

@@ -53,6 +53,7 @@ OPTIONAL_ENTRY_FIELDS: tuple[str, ...] = (
     "pages",
     "fiction",
     "review",
+    "sources",
     "original_language",
     "creation_year",
     "language_levels",
@@ -303,6 +304,7 @@ def notify_delay_minutes() -> int:
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
 ) = range(8)
+ADDING_SOURCES = 33
 ADDING_TITLE_CONFIRM = 25
 ADMIN_IMPORT_CONFIRM = 26
 ADDING_LANGUAGE_LEVEL = 27

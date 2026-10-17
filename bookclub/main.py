@@ -29,6 +29,7 @@ from bookclub.config import (
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_SOURCES,
     ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
@@ -69,6 +70,9 @@ from bookclub.handlers.add import (
     add_pages,
     add_review,
     add_review_pick_cb,
+    add_review_skip_cb,
+    add_sources,
+    add_sources_skip_cb,
     add_start_cb,
     add_title,
     add_title_similar_cb,
@@ -120,6 +124,7 @@ from bookclub.handlers.edit_delete import (
     edit_language_levels_cb,
     edit_original_language_cb,
     edit_pick_cb,
+    edit_skip_cmd,
     edit_value_handler,
     edit_yn_cb,
 )
@@ -184,7 +189,15 @@ def add_flow_states() -> dict[Any, list[Any]]:
         ],
         ADDING_REVIEW: [
             CallbackQueryHandler(add_review_pick_cb, pattern=r"^add_review_pick:\d+$"),
+            CallbackQueryHandler(add_review_skip_cb, pattern=r"^add_review:skip$"),
+            CommandHandler("skip", add_review),
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_SOURCES: [
+            CallbackQueryHandler(add_sources_skip_cb, pattern=r"^add_sources:skip$"),
+            CommandHandler("skip", add_sources),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_sources),
             *_ADD_NAV_HANDLERS,
         ],
         ADDING_ORIGINAL_LANGUAGE: [
@@ -344,6 +357,7 @@ def register_handlers(app: Application) -> None:
                     CallbackQueryHandler(
                         edit_original_language_cb, pattern=r"^edit_orig_lang:"
                     ),
+                    CommandHandler("skip", edit_skip_cmd),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
                 ],
             },

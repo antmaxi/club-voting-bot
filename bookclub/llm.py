@@ -259,6 +259,16 @@ def _writing_language_phrase(title: str) -> str:
     return "in the same language as the title the user wrote"
 
 
+def _llm_wanted(
+    enabled: frozenset[str], *, drop: frozenset[str] = frozenset()
+) -> list[str]:
+    """Optional fields the model may fill. Sources stay user-entered."""
+    skip = frozenset({"sources"}) | drop
+    return [
+        name for name in OPTIONAL_ENTRY_FIELDS if name in enabled and name not in skip
+    ]
+
+
 def suggest_book_fields(
     title: str,
     *,
@@ -271,12 +281,12 @@ def suggest_book_fields(
     ``error`` is None on success (the dict may still be empty),
     ``not_configured``, or a short failure description for the admin UI.
     """
-    if not config.llm_configured():
-        return {}, "not_configured"
     enabled = enabled_fields if enabled_fields is not None else ENTRY_FIELDS
-    wanted = [name for name in OPTIONAL_ENTRY_FIELDS if name in enabled]
+    wanted = _llm_wanted(enabled)
     if not wanted:
         return {}, None
+    if not config.llm_configured():
+        return {}, "not_configured"
     club_entity = entity or CLUB_ENTITY
     lang = suggestion_catalog_lang(title, lang)
     try:
@@ -355,9 +365,7 @@ def suggest_fields_after_review(
 ) -> tuple[dict[str, Any], str | None]:
     """Fill remaining /add fields from the confirmed review page when possible."""
     enabled = enabled_fields if enabled_fields is not None else ENTRY_FIELDS
-    wanted = [
-        name for name in OPTIONAL_ENTRY_FIELDS if name in enabled and name != "review"
-    ]
+    wanted = _llm_wanted(enabled, drop=frozenset({"review"}))
     if not wanted:
         return {}, None
     club_entity = entity or CLUB_ENTITY
@@ -387,14 +395,12 @@ def suggest_book_fields_from_page(
     entity: str | None = None,
     enabled_fields: frozenset[str] | None = None,
 ) -> tuple[dict[str, Any], str | None]:
-    if not config.llm_configured():
-        return {}, "not_configured"
     enabled = enabled_fields if enabled_fields is not None else ENTRY_FIELDS
-    wanted = [
-        name for name in OPTIONAL_ENTRY_FIELDS if name in enabled and name != "review"
-    ]
+    wanted = _llm_wanted(enabled, drop=frozenset({"review"}))
     if not wanted:
         return {}, None
+    if not config.llm_configured():
+        return {}, "not_configured"
     club_entity = entity or CLUB_ENTITY
     try:
         content = chat_completion(

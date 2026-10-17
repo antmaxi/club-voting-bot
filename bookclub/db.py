@@ -15,6 +15,91 @@ from bookclub.types import BookLike
 IMPORTED_USER_ID = config.IMPORTED_USER_ID
 _CREATION_YEAR_MIN = 1000
 _CREATION_YEAR_MAX = 2100
+MAX_SOURCES = 3
+
+
+class SourceParseError(ValueError):
+    """Raised when source-link text is not 1–3 http(s) URLs or /skip."""
+
+
+def _clean_source_urls(urls: Sequence[object]) -> list[str]:
+    clean: list[str] = []
+    seen: set[str] = set()
+    for raw in urls:
+        url = str(raw).strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        clean.append(url)
+        if len(clean) == MAX_SOURCES:
+            break
+    return clean
+
+
+def encode_sources(urls: Sequence[object]) -> str:
+    """Store up to three source URLs as a JSON array, or '' when empty."""
+    clean = _clean_source_urls(urls)
+    if not clean:
+        return ""
+    return json.dumps(clean, ensure_ascii=False)
+
+
+def decode_sources(raw: object) -> list[str]:
+    """Read stored sources: JSON array, a list, or whitespace-separated URLs."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return _clean_source_urls(raw)
+    text = str(raw).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return _clean_source_urls(parsed)
+    return _clean_source_urls(text.split())
+
+
+def _book_field(book: BookLike, key: str, default: Any = None) -> Any:
+    if isinstance(book, sqlite3.Row):
+        if key in book.keys():  # noqa: SIM118
+            return book[key]
+        return default
+    try:
+        return book[key]
+    except KeyError:
+        return default
+
+
+def _sources_from_export(raw: object) -> str:
+    from bookclub.ui import is_valid_url
+
+    return encode_sources([url for url in decode_sources(raw) if is_valid_url(url)])
+
+
+def parse_source_links(text: str) -> list[str]:
+    """Parse one message into at most three source URLs. /skip yields []."""
+    from bookclub.ui import is_valid_url
+
+    stripped = text.strip()
+    if stripped == "/skip":
+        return []
+    parts = [part for part in stripped.split() if part]
+    if not parts or len(parts) > MAX_SOURCES:
+        raise SourceParseError
+    urls: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not is_valid_url(part):
+            raise SourceParseError
+        if part in seen:
+            continue
+        seen.add(part)
+        urls.append(part)
+    return urls
 
 
 def _ensure_db_writable() -> None:
@@ -54,6 +139,7 @@ def init_db() -> None:
                 pages         INTEGER NOT NULL DEFAULT 0,
                 fiction       INTEGER NOT NULL DEFAULT 1,
                 review_link   TEXT NOT NULL DEFAULT '',
+                sources       TEXT NOT NULL DEFAULT '',
                 description   TEXT DEFAULT '',
                 hidden        INTEGER NOT NULL DEFAULT 0,
                 discussed     INTEGER NOT NULL DEFAULT 0,
@@ -69,6 +155,7 @@ def init_db() -> None:
             ("pages", "INTEGER NOT NULL DEFAULT 0"),
             ("fiction", "INTEGER NOT NULL DEFAULT 1"),
             ("review_link", "TEXT NOT NULL DEFAULT ''"),
+            ("sources", "TEXT NOT NULL DEFAULT ''"),
             ("hidden", "INTEGER NOT NULL DEFAULT 0"),
             ("discussed", "INTEGER NOT NULL DEFAULT 0"),
             ("discussed_at", "TEXT DEFAULT NULL"),
@@ -296,6 +383,7 @@ def db_add_book(
     original_language: str | None = None,
     creation_year: int | None = None,
     language_levels: str | None = None,
+    sources: str = "",
 ) -> int | None:
     lang = (original_language or "").strip() or None
     with sqlite3.connect(config.DB_PATH) as conn:
@@ -303,9 +391,9 @@ def db_add_book(
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language, creation_year, language_levels,
+                original_language, creation_year, language_levels, sources,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title,
                 author,
@@ -316,6 +404,7 @@ def db_add_book(
                 lang,
                 creation_year,
                 language_levels,
+                sources,
                 user_id,
                 user_name,
                 username,
@@ -609,6 +698,7 @@ def db_update_book_field(book_id: int, field: str, value: Any) -> None:
         "pages",
         "fiction",
         "review_link",
+        "sources",
         "description",
         "original_language",
         "creation_year",
@@ -948,6 +1038,7 @@ def book_to_export_payload(book: BookLike) -> str:
             "pages": int(book["pages"]),
             "fiction": bool(book["fiction"]),
             "review_link": book["review_link"] or "",
+            "sources": decode_sources(_book_field(book, "sources", "")),
             "description": book["description"] or "",
             "original_language": book["original_language"] or "",
             "creation_year": book["creation_year"],
@@ -980,6 +1071,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
     else:
         fiction = 1 if int(fiction_raw) else 0
     review_link = str(raw.get("review_link", "") or "")
+    sources = _sources_from_export(raw.get("sources", ""))
     description = str(raw.get("description", "") or "")
     original_language = str(raw.get("original_language", "") or "").strip() or None
     creation_year_raw = raw.get("creation_year")
@@ -1016,6 +1108,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
         "pages": pages,
         "fiction": fiction,
         "review_link": review_link,
+        "sources": sources,
         "description": description,
         "original_language": original_language,
         "creation_year": creation_year,
@@ -1066,10 +1159,10 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language, creation_year, language_levels,
+                original_language, creation_year, language_levels, sources,
                 hidden, discussed, discussed_at,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 book_data["title"],
                 book_data["author"],
@@ -1080,6 +1173,7 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
                 book_data.get("original_language"),
                 book_data.get("creation_year"),
                 book_data.get("language_levels"),
+                book_data.get("sources") or "",
                 book_data["hidden"],
                 book_data["discussed"],
                 book_data["discussed_at"],

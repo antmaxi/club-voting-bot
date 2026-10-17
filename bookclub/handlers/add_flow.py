@@ -26,12 +26,13 @@ from bookclub.config import (
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_SOURCES,
     ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
     entry_field_enabled,
 )
-from bookclub.db import db_update_add_draft
+from bookclub.db import db_update_add_draft, decode_sources
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import display_original_language
 from bookclub.ui import (
@@ -54,6 +55,7 @@ _TEXT_EDIT_STATES = frozenset(
         ADDING_AUTHOR,
         ADDING_PAGES,
         ADDING_REVIEW,
+        ADDING_SOURCES,
         ADDING_ORIGINAL_LANGUAGE_OTHER,
         ADDING_CREATION_YEAR,
         ADDING_DESCRIPTION,
@@ -64,6 +66,7 @@ _PRIVATE_INLINE_CHATS = frozenset({None, "sender", "private"})
 _ADD_STEP_ORDER = (
     ADDING_TITLE,
     ADDING_REVIEW,
+    ADDING_SOURCES,
     ADDING_AUTHOR,
     ADDING_PAGES,
     ADDING_FICTION,
@@ -79,6 +82,7 @@ _STATE_ENTRY_FIELD = {
     ADDING_PAGES: "pages",
     ADDING_FICTION: "fiction",
     ADDING_REVIEW: "review",
+    ADDING_SOURCES: "sources",
     ADDING_ORIGINAL_LANGUAGE: "original_language",
     ADDING_ORIGINAL_LANGUAGE_OTHER: "original_language",
     ADDING_CREATION_YEAR: "creation_year",
@@ -184,6 +188,7 @@ def draft_book_like(nb: dict, user: Any) -> dict[str, Any]:
         "pages": nb.get("pages") or 0,
         "fiction": 1 if nb.get("fiction", True) else 0,
         "review_link": nb.get("review_link") or "",
+        "sources": decode_sources(nb.get("sources")),
         "description": nb.get("description") or "",
         "hidden": 0,
         "discussed": 0,
@@ -235,6 +240,7 @@ def _prompt_key_for_state(state: int) -> str | None:
         ADDING_PAGES: "ask_pages",
         ADDING_FICTION: "ask_fiction",
         ADDING_REVIEW: "ask_review",
+        ADDING_SOURCES: "ask_sources",
         ADDING_ORIGINAL_LANGUAGE: "ask_original_language",
         ADDING_ORIGINAL_LANGUAGE_OTHER: "ask_original_language_other",
         ADDING_CREATION_YEAR: "ask_creation_year",
@@ -263,6 +269,9 @@ def _current_value_display(nb: dict, state: int, lang: str) -> str | None:
     if state == ADDING_REVIEW:
         v = nb.get("review_link")
         return str(v) if v else None
+    if state == ADDING_SOURCES:
+        urls = decode_sources(nb.get("sources"))
+        return " · ".join(urls) if urls else None
     if state in (ADDING_ORIGINAL_LANGUAGE, ADDING_ORIGINAL_LANGUAGE_OTHER):
         if "original_language" not in nb:
             return None
@@ -406,6 +415,9 @@ def raw_add_value(nb: dict, state: int) -> str | None:
     if state == ADDING_REVIEW:
         v = nb.get("review_link")
         return str(v) if v else None
+    if state == ADDING_SOURCES:
+        urls = decode_sources(nb.get("sources"))
+        return "\n".join(urls) if urls else None
     if state == ADDING_ORIGINAL_LANGUAGE_OTHER:
         v = nb.get("original_language")
         return str(v) if v else None
@@ -551,11 +563,14 @@ def add_prompt_markup(
             show_save=show_save,
         )
     if state == ADDING_REVIEW and review_choices:
-        return review_choice_keyboard(lang, review_choices, show_save=show_save)
+        return review_choice_keyboard(
+            lang, review_choices, show_save=show_save, show_skip=True
+        )
     if state in (
         ADDING_AUTHOR,
         ADDING_PAGES,
         ADDING_REVIEW,
+        ADDING_SOURCES,
         ADDING_ORIGINAL_LANGUAGE_OTHER,
         ADDING_CREATION_YEAR,
         ADDING_DESCRIPTION,
@@ -567,6 +582,10 @@ def add_prompt_markup(
             edit_value=edit_value,
             use_inline=use_inline,
             show_save=show_save,
+            show_skip=state in (ADDING_REVIEW, ADDING_SOURCES),
+            skip_callback=(
+                "add_sources:skip" if state == ADDING_SOURCES else "add_review:skip"
+            ),
         )
     return cancel_keyboard(lang)
 

@@ -769,7 +769,7 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIn("3127", markup.inline_keyboard[0][0].text)
         self._callback_query("add_review_pick:0")
         state = await bot.add_review_pick_cb(self.update, self.ctx)
-        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(state, bot.ADDING_SOURCES)
         self.assertEqual(self.ctx.user_data["new_book"]["review_link"], popular)
         self.assertNotIn("review_choices", self.ctx.user_data)
         mock_from_page.assert_called_once()
@@ -1376,7 +1376,7 @@ class TestAddConversation(BotHandlerTestCase):
             self.ctx.user_data["new_book"]["review_link"],
             "https://goodreads.com/book/1",
         )
-        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(state, bot.ADDING_SOURCES)
 
     @patch("bookclub.handlers.add.suggest_fields_after_review")
     async def test_add_review_ai_reads_pages_from_page(self, mock_from_page):
@@ -1388,7 +1388,7 @@ class TestAddConversation(BotHandlerTestCase):
         self.ctx.user_data["new_book"] = {"title": "War and Peace"}
         self.message.text = "https://en.wikipedia.org/wiki/War_and_Peace"
         state = await bot.add_review(self.update, self.ctx)
-        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(state, bot.ADDING_SOURCES)
         nb = self.ctx.user_data["new_book"]
         self.assertEqual(nb["pages"], 1225)
         self.assertEqual(nb["author"], "Leo Tolstoy")
@@ -1401,20 +1401,63 @@ class TestAddConversation(BotHandlerTestCase):
         )
         texts = [c[0][0] for c in self.message.reply_text.call_args_list]
         self.assertTrue(any("Reading the review page" in t for t in texts))
-        self.assertTrue(any("Leo Tolstoy" in t for t in texts))
+        self.assertTrue(any("source" in t.casefold() for t in texts))
 
-    async def test_add_back_from_author_returns_review(self):
+    async def test_add_back_from_author_returns_sources(self):
         self.ctx.user_data["new_book"] = {
             "title": "T",
             "review_link": "https://en.wikipedia.org/wiki/T",
+            "sources": ["https://example.com/read"],
             "author": "A",
         }
         self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
         self.message.text = "/back"
         state = await bot.add_go_back(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_SOURCES)
+        reply = self.message.reply_text.call_args[0][0]
+        self.assertIn("example.com/read", reply)
+
+    async def test_add_back_from_sources_returns_review(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "review_link": "https://en.wikipedia.org/wiki/T",
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_SOURCES
+        self.message.text = "/back"
+        state = await bot.add_go_back(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_REVIEW)
         reply = self.message.reply_text.call_args[0][0]
         self.assertIn("wikipedia.org", reply)
+
+    async def test_add_review_skip_leaves_link_empty(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "review_link": "http://old"}
+        self.message.text = "/skip"
+        state = await bot.add_review(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["review_link"], "")
+        self.assertEqual(state, bot.ADDING_SOURCES)
+
+    async def test_add_sources_stores_up_to_three_and_advances(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        self.message.text = (
+            "https://example.com/a\nhttps://example.com/b https://example.com/c"
+        )
+        state = await bot.add_sources(self.update, self.ctx)
+        self.assertEqual(
+            self.ctx.user_data["new_book"]["sources"],
+            [
+                "https://example.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+            ],
+        )
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+
+    async def test_add_sources_rejects_a_fourth_link(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        self.message.text = " ".join(f"https://example.com/{i}" for i in range(4))
+        state = await bot.add_sources(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_SOURCES)
+        self.assertNotIn("sources", self.ctx.user_data["new_book"])
 
     async def test_add_original_language_skip(self):
         self.ctx.user_data["new_book"] = {"review_link": "http://x.com"}

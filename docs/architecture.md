@@ -165,6 +165,7 @@ erDiagram
     int pages
     int fiction
     text review_link
+    text sources
     text description
     int hidden
     int discussed
@@ -213,7 +214,7 @@ Notes:
 
 ## Notable flows
 
-**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → review link (when enabled) → remaining `ENTRY_FIELDS` → a full-entry preview where the user can go back to edit a field or confirm the add. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI looks up a real catalog URL (LitRes / Kinopoisk for Russian-language works, Goodreads / IMDb otherwise, then Wikipedia, then a fetched LLM candidate) and, after the user confirms it, reads the other fields — including page count / runtime — from that page. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
+**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → review link (when enabled; `/skip` or **Skip** leaves it empty) → up to three source links (when enabled; same skip) → remaining `ENTRY_FIELDS` → a full-entry preview where the user can go back to edit a field or confirm the add. Sources are stored as a JSON array of at most three URLs and shown on the entry card. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI looks up a real catalog URL (LitRes / Kinopoisk for Russian-language works, Goodreads / IMDb otherwise, then Wikipedia, then a fetched LLM candidate) and, after the user confirms it, reads the other fields — including page count / runtime — from that page. Source links are not filled by the model. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
 
 **Voting:** inline buttons on cards (`vote_cast:`). Works in DM and in the group chat; the message is edited so everyone sees the new tally.
 

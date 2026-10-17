@@ -97,7 +97,7 @@ When recording or viewing attendance, the bot shows each person’s Telegram dis
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
    # Optional: which extra fields to ask on /add and show on cards (title is always required).
    # Unset = all except language_levels. "all" includes CEFR too. Aliases: review_link, runtime.
-   # ENTRY_FIELDS="author,pages,fiction,review,original_language,creation_year,description"
+   # ENTRY_FIELDS="author,pages,fiction,review,sources,original_language,creation_year,description"
    ASK_LANGUAGE_LEVEL="1"     # Optional: also ask CEFR A1–C2 (adds language_levels to ENTRY_FIELDS)
    DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)
    INSTANCE_NAME="book"       # Optional: Label prepended to error alerts (see "Logs & error alerts")
@@ -139,7 +139,7 @@ The database schema is shared. For films, fields are reused as follows:
 
 Title is always required. Every other property can be turned off. `ENTRY_FIELDS` is a comma-separated list of:
 
-`author`, `pages`, `fiction`, `review`, `original_language`, `creation_year`, `language_levels`, `description`
+`author`, `pages`, `fiction`, `review`, `sources`, `original_language`, `creation_year`, `language_levels`, `description`
 
 Aliases: `review_link` → `review`, `runtime` → `pages`. Listing `title` is ignored (it is always on).
 
@@ -150,13 +150,15 @@ Aliases: `review_link` → `review`, `runtime` → `pages`. Listing `title` is i
 
 Example: `ENTRY_FIELDS=author,description` asks only title, author, and description.
 
+`sources` asks for up to three links (where to find the book or film) and shows them on the card. The review step and the sources step can be skipped with `/skip` or **Skip**.
+
 Set `ASK_LANGUAGE_LEVEL=1` (or include `language_levels` in `ENTRY_FIELDS`) to prompt members to pick one or more CEFR levels (A1 through C2) via inline buttons when adding or editing an entry.
 
 You can run separate bot instances (different tokens, different `.env` files) for a book bot and a film bot on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 
 ### `/add` AI suggestions
 
-After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand — or, if you already have unfinished drafts, `/add` starts with **Use AI**, **I'll fill it in**, and **Continue a saved draft**. The review link is asked next (when enabled), before author, pages, and the rest.
+After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand — or, if you already have unfinished drafts, `/add` starts with **Use AI**, **I'll fill it in**, and **Continue a saved draft**. The review link is asked next (when enabled), then up to three source links, then author, pages, and the rest. Review and sources are optional: send `/skip` or tap **Skip**. Source links are shown on the entry card.
 
 **Use AI** first looks up a real catalog/review URL (LitRes / Kinopoisk for Russian-language works, Goodreads / IMDb otherwise, then Wikipedia; LLM guesses are fetched and dropped if the page is not about the title). You confirm or replace that link, then the bot reads the page and fills the other fields — including page count or runtime when the page lists it. By default it uses an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) for extraction. Set `LLM_PROVIDER=cursor` with `CURSOR_API_KEY` to use a local Cursor agent (`composer-2.5`, no tools) billed to the Cursor subscription instead of that API. Tap **Forward** to keep a suggestion or a previously saved answer, or send a new value to replace it. **Edit** puts the current text in the message field so you can change it (then send). **I'll fill it in** is the original manual wizard. After the last field, the bot shows the full entry so you can go back to change a field or confirm the add. Tap **Save** (or `/save`) to keep progress; a later `/add` can resume that draft, including which fields are still AI suggestions (unless you edited them).
 
