@@ -82,6 +82,55 @@ def h(text: str) -> str:
     )
 
 
+# Deep-link payload for /start. Opens a private chat and asks the bot for one card.
+VOTE_START_PREFIX = "vote_"
+
+
+def bot_username_for_links(username: object) -> str | None:
+    """Telegram username safe to put in a t.me deep link, or None."""
+    if not isinstance(username, str):
+        return None
+    name = username[1:] if username.startswith("@") else username
+    if not 5 <= len(name) <= 32:
+        return None
+    if not name[0].isascii() or not name[0].isalpha():
+        return None
+    if any(not (c.isascii() and (c.isalnum() or c == "_")) for c in name):
+        return None
+    return name
+
+
+def vote_start_payload(book_id: int) -> str:
+    return f"{VOTE_START_PREFIX}{int(book_id)}"
+
+
+def vote_book_id_from_start_args(args: object) -> int | None:
+    """Book id from a /start deep-link payload, or None when it is not one."""
+    if not isinstance(args, list | tuple) or len(args) != 1:
+        return None
+    raw = args[0]
+    if not isinstance(raw, str) or not raw.startswith(VOTE_START_PREFIX):
+        return None
+    rest = raw[len(VOTE_START_PREFIX) :]
+    if not rest.isdigit():
+        return None
+    return int(rest)
+
+
+def vote_deeplink(bot_username: str, book_id: int) -> str:
+    return f"https://t.me/{bot_username}?start={vote_start_payload(book_id)}"
+
+
+def linked_book_title(title: str, book_id: int, bot_username: str | None) -> str:
+    """Bold title. When the bot username is known, the title opens a private vote card."""
+    safe = h(title)
+    name = bot_username_for_links(bot_username)
+    if name is None:
+        return f"<b>{safe}</b>"
+    url = vote_deeplink(name, book_id)
+    return f'<a href="{url}"><b>{safe}</b></a>'
+
+
 def similar_title_warning_matches_text(
     matches: Sequence[tuple[int, str, float]], *, limit: int = 5
 ) -> str:

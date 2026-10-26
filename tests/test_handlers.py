@@ -175,6 +175,50 @@ class TestStartHelp(BotHandlerTestCase):
         await bot.cmd_help(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
 
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
+    async def test_cmd_start_ignores_unrelated_payload(self, mock_set):
+        self.ctx.args = ["hello"]
+        await bot.cmd_start(self.update, self.ctx)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Welcome", text)
+
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
+    async def test_cmd_start_vote_deeplink_sends_private_card(self, mock_set):
+        book_id = self._add_book("War & Peace")
+        bot.db_cast_vote(self.update.effective_user.id, book_id, 1)
+        self.ctx.args = [f"vote_{book_id}"]
+        await bot.cmd_start(self.update, self.ctx)
+        self.message.reply_text.assert_called_once()
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("War &amp; Peace", text)
+        self.assertIn("Your current vote", text)
+        self.assertNotIn("Welcome", text)
+        markup = self.message.reply_text.call_args.kwargs["reply_markup"]
+        callbacks = [
+            button.callback_data
+            for row in markup.inline_keyboard
+            for button in row
+            if button.callback_data
+        ]
+        self.assertIn(f"vote_cast:{book_id}:1", callbacks)
+        checked = [
+            button.text
+            for row in markup.inline_keyboard
+            for button in row
+            if button.callback_data == f"vote_cast:{book_id}:1"
+        ]
+        self.assertTrue(checked and checked[0].endswith("✓"))
+
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
+    async def test_cmd_start_vote_deeplink_closed_when_discussed(self, mock_set):
+        book_id = self._add_book("Archive")
+        bot.db_mark_discussed(book_id, "2026-01-01")
+        self.ctx.args = [f"vote_{book_id}"]
+        await bot.cmd_start(self.update, self.ctx)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Voting for this entry is closed", text)
+        self.assertNotIn("reply_markup", self.message.reply_text.call_args.kwargs)
+
 
 # ── /info ─────────────────────────────────────────────────────────────────────
 
@@ -581,6 +625,28 @@ class TestTop(BotHandlerTestCase):
         await bot.cmd_top(self.update, self.ctx)
         text = self.message.reply_text.call_args_list[0][0][0]
         self.assertIn("Unvoted", text)
+
+    async def test_cmd_top_titles_link_to_private_vote_card(self):
+        self.ctx.bot.username = "clubvotingbot"
+        first = self._add_book("Alpha & Beta")
+        second = self._add_book('Quote "Title"')
+        await bot.cmd_top(self.update, self.ctx)
+        text = self.message.reply_text.call_args_list[0][0][0]
+        self.assertIn(
+            f'<a href="https://t.me/clubvotingbot?start=vote_{first}">'
+            "<b>Alpha &amp; Beta</b></a>",
+            text,
+        )
+        self.assertIn(
+            f'<a href="https://t.me/clubvotingbot?start=vote_{second}">'
+            "<b>Quote &quot;Title&quot;</b></a>",
+            text,
+        )
+        self.assertIn("Tap a title to vote in a private chat", text)
+        self.assertTrue(
+            self.message.reply_text.call_args_list[0].kwargs["disable_web_page_preview"]
+        )
+        self.ctx.bot.get_me.assert_not_called()
 
 
 # ── score_calc_cb ──────────────────────────────────────────────────────────────

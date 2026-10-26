@@ -17,6 +17,7 @@ from telegram.ext import ContextTypes
 
 import bookclub.config as config
 from bookclub.db import (
+    db_book_is_votable,
     db_get_book,
     db_get_books,
     db_get_user_setting,
@@ -42,11 +43,14 @@ from bookclub.ui import (
     _show_list_format_prompt,
     book_card,
     books_top_n,
+    bot_username_for_links,
     fmt_dt_utc,
     h,
+    linked_book_title,
     score_display,
     score_keyboard,
     send_compact_book_list,
+    vote_book_id_from_start_args,
 )
 
 
@@ -293,8 +297,48 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         await list_choice_cb(update, ctx)
 
 
+async def _bot_username(bot: Bot) -> str | None:
+    """Username for t.me links. Falls back to getMe when it is not cached yet."""
+    username = bot_username_for_links(getattr(bot, "username", None))
+    if username:
+        return username
+    try:
+        me = await bot.get_me()
+    except Exception:
+        logger.warning("Could not resolve bot username for /top title links")
+        return None
+    return bot_username_for_links(getattr(me, "username", None))
+
+
+async def _reply_private_vote_card(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, book_id: int
+) -> None:
+    """Send one votable entry's card into the chat that opened the deep link."""
+    if update.message is None:
+        return
+    lang = get_lang(ctx)
+    if not db_book_is_votable(book_id):
+        await update.message.reply_text(tr(ctx, "voting_closed"), parse_mode=PM)
+        return
+    book = db_get_book(book_id)
+    if book is None:
+        await update.message.reply_text(tr(ctx, "voting_closed"), parse_mode=PM)
+        return
+    user_vote = db_get_user_vote(update.effective_user.id, book_id)
+    await update.message.reply_text(
+        book_card(book, lang, user_vote=user_vote),
+        parse_mode=PM,
+        reply_markup=score_keyboard(book_id, lang, user_vote),
+        disable_web_page_preview=True,
+    )
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await set_user_commands(ctx.bot, update, get_lang(ctx))
+    book_id = vote_book_id_from_start_args(getattr(ctx, "args", None))
+    if book_id is not None and update.message is not None:
+        await _reply_private_vote_card(update, ctx, book_id)
+        return
     text = tr(ctx, "welcome")
     if is_admin(update.effective_user.id):
         text += tr(ctx, "welcome_admin_suffix")
@@ -486,6 +530,7 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Show top 5, but if there's a tie for the 5th place, show all tied books.
     # Sorting is already done in db_get_books by (avg_score DESC, vote_count DESC, added_at DESC)
     top_books = books_top_n(books)
+    bot_username = await _bot_username(ctx.bot)
 
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):
@@ -505,28 +550,35 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if config.entry_field_enabled("pages"):
             meta.append(f"{h(str(book['pages']))} {h(s(lang, 'pages_label'))}")
         meta.append(f"<b>{h(s(lang, 'score_label'))}: {score_fmt}</b>")
+        title = linked_book_title(str(book["title"]), int(book["id"]), bot_username)
         lines.append(
-            f"{i}. <b>{h(book['title'])}</b>{author_part}\n"
+            f"{i}. {title}{author_part}\n"
             f"   {'  •  '.join(meta)}\n"
             f"   {score_display(book, lang)}"
+        )
+
+    async def _send_top_text(text: str) -> None:
+        # Title links point at t.me; skip the link preview so the ranking stays compact.
+        await update.message.reply_text(
+            text, parse_mode=PM, disable_web_page_preview=True
         )
 
     # Send as one message; if it exceeds Telegram's limit split into chunks
     MAX = 4000
     message = "\n\n".join(lines)
     if len(message) <= MAX:
-        await update.message.reply_text(message, parse_mode=PM)
+        await _send_top_text(message)
     else:
         chunk = ""
         for line in lines:
             candidate = (chunk + "\n\n" + line).lstrip("\n")
             if len(candidate) > MAX:
-                await update.message.reply_text(chunk, parse_mode=PM)
+                await _send_top_text(chunk)
                 chunk = line
             else:
                 chunk = candidate
         if chunk:
-            await update.message.reply_text(chunk, parse_mode=PM)
+            await _send_top_text(chunk)
 
     # Add "How a score is calculated" button
     reply_markup = InlineKeyboardMarkup(
