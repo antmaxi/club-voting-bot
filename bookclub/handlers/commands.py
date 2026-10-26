@@ -43,10 +43,10 @@ from bookclub.ui import (
     _show_list_format_prompt,
     book_card,
     books_top_n,
-    bot_username_for_links,
     fmt_dt_utc,
     h,
     linked_book_title,
+    resolve_bot_username,
     score_display,
     score_keyboard,
     send_compact_book_list,
@@ -297,19 +297,6 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         await list_choice_cb(update, ctx)
 
 
-async def _bot_username(bot: Bot) -> str | None:
-    """Username for t.me links. Falls back to getMe when it is not cached yet."""
-    username = bot_username_for_links(getattr(bot, "username", None))
-    if username:
-        return username
-    try:
-        me = await bot.get_me()
-    except Exception:
-        logger.warning("Could not resolve bot username for /top title links")
-        return None
-    return bot_username_for_links(getattr(me, "username", None))
-
-
 async def _reply_private_vote_card(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE, book_id: int
 ) -> None:
@@ -530,7 +517,7 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Show top 5, but if there's a tie for the 5th place, show all tied books.
     # Sorting is already done in db_get_books by (avg_score DESC, vote_count DESC, added_at DESC)
     top_books = books_top_n(books)
-    bot_username = await _bot_username(ctx.bot)
+    bot_username = await resolve_bot_username(ctx.bot)
 
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):

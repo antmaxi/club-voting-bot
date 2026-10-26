@@ -525,6 +525,25 @@ class TestList(BotHandlerTestCase):
         self.assertIn("<b>2</b> <b>Alpha</b>", text)
         self.assertIn("<b>0</b> <b>Beta</b>", text)
 
+    async def test_list_choice_compact_titles_link_to_private_vote_card(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        self.ctx.bot.username = "clubvotingbot"
+        alpha_id = self._add_book("Alpha & Beta")
+        q = self._callback_query("list:all:compact")
+        await bot.list_choice_cb(self.update, self.ctx)
+        q.delete_message.assert_called_once()
+        text = self.ctx.bot.send_message.call_args[1]["text"]
+        self.assertIn(
+            f'<a href="https://t.me/clubvotingbot?start=vote_{alpha_id}">'
+            "<b>Alpha &amp; Beta</b></a>",
+            text,
+        )
+        self.assertIn("Tap a title to vote in a private chat", text)
+        self.assertTrue(
+            self.ctx.bot.send_message.call_args[1]["disable_web_page_preview"]
+        )
+        self.ctx.bot.get_me.assert_not_called()
+
     async def test_list_triggers_optin_when_setting_missing(self):
         """First-time users without a notify setting see the opt-in prompt."""
         with sqlite3.connect(bot.DB_PATH) as conn:

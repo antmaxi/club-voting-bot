@@ -1215,6 +1215,16 @@ class TestUtils(unittest.TestCase):
         self.assertIn("X &amp; Y", line)
         self.assertNotIn("<B>", line)
 
+    def test_book_compact_line_links_title_when_bot_username_known(self):
+        book = make_book(id=7, title="A & B", author="X", avg_score=1)
+        line = bot.book_compact_line(1, book, "clubvotingbot")
+        self.assertIn(
+            '<a href="https://t.me/clubvotingbot?start=vote_7">'
+            "<b>A &amp; B</b></a> — X",
+            line,
+        )
+        self.assertIn("<b>1</b>", line)
+
     def test_compact_book_list_lines_matches_list_header_and_rows(self):
         books = [
             make_book(title="Dune", author="Herbert", avg_score=2, creation_year=1965),

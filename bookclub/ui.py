@@ -131,6 +131,19 @@ def linked_book_title(title: str, book_id: int, bot_username: str | None) -> str
     return f'<a href="{url}"><b>{safe}</b></a>'
 
 
+async def resolve_bot_username(bot: Bot) -> str | None:
+    """Username for t.me links. Falls back to getMe when it is not cached yet."""
+    username = bot_username_for_links(getattr(bot, "username", None))
+    if username:
+        return username
+    try:
+        me = await bot.get_me()
+    except Exception:
+        logger.warning("Could not resolve bot username for title links")
+        return None
+    return bot_username_for_links(getattr(me, "username", None))
+
+
 def similar_title_warning_matches_text(
     matches: Sequence[tuple[int, str, float]], *, limit: int = 5
 ) -> str:
@@ -532,7 +545,9 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
     return "\n".join(lines)
 
 
-def book_compact_line(index: int, book: BookLike) -> str:
+def book_compact_line(
+    index: int, book: BookLike, bot_username: str | None = None
+) -> str:
     year = book["creation_year"]
     year_suffix = (
         f" ({year})"
@@ -541,18 +556,27 @@ def book_compact_line(index: int, book: BookLike) -> str:
     )
     author_part = f" — {h(book['author'])}" if entry_field_enabled("author") else ""
     score_fmt = f"{book['avg_score']:g}"
-    return (
-        f"{index}. <b>{score_fmt}</b> <b>{h(book['title'])}</b>"
-        f"{author_part}{year_suffix}"
-    )
+    if bot_username_for_links(bot_username):
+        title = linked_book_title(str(book["title"]), int(book["id"]), bot_username)
+    else:
+        title = f"<b>{h(book['title'])}</b>"
+    return f"{index}. <b>{score_fmt}</b> {title}{author_part}{year_suffix}"
 
 
 def compact_book_list_lines(
-    books: Sequence[BookLike], ctx_or_lang: ContextTypes.DEFAULT_TYPE | str
+    books: Sequence[BookLike],
+    ctx_or_lang: ContextTypes.DEFAULT_TYPE | str,
+    bot_username: str | None = None,
 ) -> list[str]:
     """Header + compact lines, matching /list_and_vote compact format."""
     header = tr(ctx_or_lang, "list_compact_title", count=len(books))
-    return [header] + [book_compact_line(i, book) for i, book in enumerate(books, 1)]
+    if bot_username_for_links(bot_username):
+        header = (
+            header.rstrip("\n") + "\n" + tr(ctx_or_lang, "list_compact_tap_hint") + "\n"
+        )
+    return [header] + [
+        book_compact_line(i, book, bot_username) for i, book in enumerate(books, 1)
+    ]
 
 
 TELEGRAM_MESSAGE_MAX = 4000
@@ -564,6 +588,7 @@ async def send_chunked_html_messages(
     lines: Sequence[str],
     *,
     joiner: str = "\n",
+    disable_web_page_preview: bool = False,
 ) -> None:
     """Send lines in as few Telegram messages as possible (HTML parse mode)."""
     if not lines:
@@ -573,15 +598,30 @@ async def send_chunked_html_messages(
         candidate = joiner.join(filter(None, [chunk, line])) if chunk else line
         if len(candidate) > TELEGRAM_MESSAGE_MAX:
             if chunk:
-                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=PM,
+                    disable_web_page_preview=disable_web_page_preview,
+                )
             chunk = line
             if len(chunk) > TELEGRAM_MESSAGE_MAX:
-                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=PM,
+                    disable_web_page_preview=disable_web_page_preview,
+                )
                 chunk = ""
         else:
             chunk = candidate
     if chunk:
-        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=chunk,
+            parse_mode=PM,
+            disable_web_page_preview=disable_web_page_preview,
+        )
 
 
 async def send_compact_book_list(
@@ -593,8 +633,13 @@ async def send_compact_book_list(
     """Send the compact ranking list to chat_id (no-op if books is empty)."""
     if not books:
         return
+    bot_username = await resolve_bot_username(bot)
     await send_chunked_html_messages(
-        bot, chat_id, compact_book_list_lines(books, ctx_or_lang), joiner="\n"
+        bot,
+        chat_id,
+        compact_book_list_lines(books, ctx_or_lang, bot_username),
+        joiner="\n",
+        disable_web_page_preview=True,
     )
 
 
