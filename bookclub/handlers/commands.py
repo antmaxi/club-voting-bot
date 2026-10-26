@@ -89,9 +89,15 @@ def _book_page_markup(
     book_id: int | None = None,
     lang: str = "ru",
     user_vote: int | None = None,
+    for_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     rows = (
-        [list(row) for row in score_keyboard(book_id, lang, user_vote).inline_keyboard]
+        [
+            list(row)
+            for row in score_keyboard(
+                book_id, lang, user_vote, for_admin=for_admin
+            ).inline_keyboard
+        ]
         if book_id is not None
         else []
     )
@@ -140,9 +146,10 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
         return
     lang = get_lang(ctx)
+    show_votes = scope != "discussed"
     user_vote = (
         None
-        if scope == "discussed"
+        if not show_votes
         else db_get_user_vote(query.from_user.id, int(book["id"]))
     )
     header = (
@@ -157,9 +164,10 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             token,
             index,
             len(book_ids),
-            book_id=None if scope == "discussed" else int(book["id"]),
+            book_id=None if not show_votes else int(book["id"]),
             lang=lang,
             user_vote=user_vote,
+            for_admin=show_votes and is_admin(query.from_user.id),
         ),
     )
 
@@ -315,7 +323,12 @@ async def _reply_private_vote_card(
     await update.message.reply_text(
         book_card(book, lang, user_vote=user_vote),
         parse_mode=PM,
-        reply_markup=score_keyboard(book_id, lang, user_vote),
+        reply_markup=score_keyboard(
+            book_id,
+            lang,
+            user_vote,
+            for_admin=is_admin(update.effective_user.id),
+        ),
         disable_web_page_preview=True,
     )
 
@@ -488,6 +501,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             book_id=int(first["id"]),
             lang=lang,
             user_vote=uv,
+            for_admin=is_admin(user_id),
         ),
     )
 

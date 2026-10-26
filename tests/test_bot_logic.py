@@ -1379,6 +1379,14 @@ class TestUtils(unittest.TestCase):
         self.assertIn("✅ Want", labels)
         self.assertIn("😐 Don't care", labels)
         self.assertIn("❌ Don't want", labels)
+        self.assertEqual(len(kb.inline_keyboard), 1)
+
+    def test_score_keyboard_admin_adds_mark_discussed(self):
+        kb = bot.score_keyboard(42, "en", for_admin=True)
+        callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+        self.assertIn("vote_cast:42:1", callbacks)
+        self.assertIn("mark_discussed:42", callbacks)
+        self.assertEqual(kb.inline_keyboard[1][0].text, "📌 Mark as discussed")
 
     def test_interactive_keyboards_include_cancel(self):
         def callbacks(kb):

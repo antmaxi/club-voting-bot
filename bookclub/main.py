@@ -92,6 +92,7 @@ from bookclub.handlers.admin import (
     admin_import_similar_cb,
     admin_mark_date_handler,
     admin_mark_edit_pick_cb,
+    admin_mark_from_card_cb,
     admin_mark_pick_cb,
     admin_meeting_add_id_handler,
     admin_meeting_att_cb,
@@ -258,7 +259,12 @@ def register_handlers(app: Application) -> None:
 
     app.add_handler(
         ConversationHandler(
-            entry_points=[CommandHandler("adminconsole", cmd_admin_console)],
+            entry_points=[
+                CommandHandler("adminconsole", cmd_admin_console),
+                CallbackQueryHandler(
+                    admin_mark_from_card_cb, pattern=r"^mark_discussed:\d+$"
+                ),
+            ],
             states={
                 ADMIN_MENU: [CallbackQueryHandler(admin_menu_cb, pattern=r"^admin:")],
                 ADMIN_MARK_CHOOSE: [

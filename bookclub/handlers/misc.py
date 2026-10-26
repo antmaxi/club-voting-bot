@@ -5,17 +5,25 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
 from bookclub.db import db_book_is_votable, db_cast_vote, db_upsert_club_user
-from bookclub.domain import require_book
+from bookclub.domain import is_admin, require_book
 from bookclub.i18n import PM, get_lang, s, tr, vote_label_text
 from bookclub.logging_setup import logger
 from bookclub.ui import book_card, score_keyboard
 
 
 def _score_markup_with_navigation(
-    query: object, book_id: int, lang: str, user_vote: int | None = None
+    query: object,
+    book_id: int,
+    lang: str,
+    user_vote: int | None = None,
+    *,
+    for_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     rows = [
-        list(row) for row in score_keyboard(book_id, lang, user_vote).inline_keyboard
+        list(row)
+        for row in score_keyboard(
+            book_id, lang, user_vote, for_admin=for_admin
+        ).inline_keyboard
     ]
     message = getattr(query, "message", None)
     markup = getattr(message, "reply_markup", None)
@@ -156,7 +164,9 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await query.edit_message_text(
             book_card(book, lang, user_vote=uv),
             parse_mode=PM,
-            reply_markup=_score_markup_with_navigation(query, book_id, lang, uv),
+            reply_markup=_score_markup_with_navigation(
+                query, book_id, lang, uv, for_admin=is_admin(user_id)
+            ),
         )
     except BadRequest as e:
         if "Message is not modified" in str(e):

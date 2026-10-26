@@ -20,6 +20,7 @@ from bookclub.db import (
     db_mark_new_book_notify_done,
     db_set_new_book_notify_pending,
 )
+from bookclub.domain import is_admin
 from bookclub.i18n import PM, tr
 from bookclub.logging_setup import logger
 from bookclub.ui import book_card, post_book_voting_to_group_chat, score_keyboard
@@ -126,7 +127,9 @@ async def vote_reminder_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     chat_id=user_id,
                     text=book_card(book, lang),
                     parse_mode=PM,
-                    reply_markup=score_keyboard(int(book["id"]), lang),
+                    reply_markup=score_keyboard(
+                        int(book["id"]), lang, for_admin=is_admin(int(user_id))
+                    ),
                 )
                 await asyncio.sleep(0.05)
         except Exception as exc:
@@ -244,7 +247,9 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=user_id,
                 text=text,
                 parse_mode=PM,
-                reply_markup=score_keyboard(book_id, lang, uv),
+                reply_markup=score_keyboard(
+                    book_id, lang, uv, for_admin=is_admin(int(user_id))
+                ),
             )
             sent += 1
             await asyncio.sleep(0.05)

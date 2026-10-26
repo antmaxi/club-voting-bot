@@ -1258,22 +1258,40 @@ async def post_book_voting_to_group_chat(
 
 
 def score_keyboard(
-    book_id: int, lang: str, current: int | None = None
+    book_id: int,
+    lang: str,
+    current: int | None = None,
+    *,
+    for_admin: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Compact 3-button vote row to attach directly to book cards."""
+    """Compact vote row to attach directly to book cards.
+
+    Admins also get a control to start marking the entry as discussed.
+    """
     options = [
         (1, s(lang, "want_btn")),
         (0, s(lang, "meh_btn")),
         (-1, s(lang, "no_btn")),
     ]
-    row = [
-        InlineKeyboardButton(
-            label + (" ✓" if current == score else ""),
-            callback_data=f"vote_cast:{book_id}:{score}",
-        )
-        for score, label in options
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                label + (" ✓" if current == score else ""),
+                callback_data=f"vote_cast:{book_id}:{score}",
+            )
+            for score, label in options
+        ]
     ]
-    return InlineKeyboardMarkup([row])
+    if for_admin:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "mark_discussed_btn"),
+                    callback_data=f"mark_discussed:{book_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def is_valid_url(text: str) -> bool:

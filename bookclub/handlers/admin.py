@@ -694,6 +694,37 @@ async def admin_notify_chat_top_cb(
     return ConversationHandler.END
 
 
+async def admin_mark_from_card_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Start the discussion-date prompt from a vote card. Admins only."""
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    lang = get_lang(ctx)
+    try:
+        book_id = int(query.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer()
+        return ConversationHandler.END
+    book = db_get_book(book_id)
+    if book is None or book["discussed"]:
+        await query.answer(tr(ctx, "voting_closed"), show_alert=True)
+        return ConversationHandler.END
+    if query.message is None:
+        await query.answer()
+        return ConversationHandler.END
+    await query.answer()
+    ctx.user_data.pop("mark_edit_date", None)
+    ctx.user_data["mark_book_id"] = book_id
+    await query.message.reply_text(
+        tr(ctx, "ask_discuss_date"),
+        parse_mode=PM,
+        reply_markup=cancel_keyboard(lang),
+    )
+    return ADMIN_MARK_DATE
+
+
 async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END

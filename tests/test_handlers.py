@@ -445,6 +445,51 @@ class TestList(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         self.assertIn("Book 1", q.edit_message_text.call_args[0][0])
 
+    def _markup_callbacks(self, markup):
+        return [
+            button.callback_data
+            for row in markup.inline_keyboard
+            for button in row
+            if button.callback_data
+        ]
+
+    async def test_list_card_hides_mark_discussed_from_members(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        book_id = self._add_book("Members Only")
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [999999]
+            q = self._callback_query("list:all:full")
+            await bot.list_choice_cb(self.update, self.ctx)
+        finally:
+            cfg.ADMIN_IDS = old
+        callbacks = self._markup_callbacks(
+            q.edit_message_text.call_args.kwargs["reply_markup"]
+        )
+        self.assertIn(f"vote_cast:{book_id}:1", callbacks)
+        self.assertFalse(any(cb.startswith("mark_discussed:") for cb in callbacks))
+
+    async def test_list_card_shows_mark_discussed_for_admin(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        book_id = self._add_book("Admin Card")
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [self.update.effective_user.id]
+            q = self._callback_query("list:all:full")
+            await bot.list_choice_cb(self.update, self.ctx)
+        finally:
+            cfg.ADMIN_IDS = old
+        markup = q.edit_message_text.call_args.kwargs["reply_markup"]
+        callbacks = self._markup_callbacks(markup)
+        self.assertIn(f"mark_discussed:{book_id}", callbacks)
+        label = next(
+            button.text
+            for row in markup.inline_keyboard
+            for button in row
+            if button.callback_data == f"mark_discussed:{book_id}"
+        )
+        self.assertEqual(label, "📌 Mark as discussed")
+
     async def test_list_choice_unvoted_excludes_voted_book(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
         book_id = self._add_book("Book 1")
@@ -2168,6 +2213,30 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(bot.db_get_book(bid)["hidden"], 0)
         self.assertIn("visible", q.edit_message_text.call_args[0][0].lower())
 
+    async def test_admin_mark_from_card_asks_for_date(self):
+        bid = self._add_book("From Card")
+        q = self._callback_query(f"mark_discussed:{bid}")
+        q.message = AsyncMock()
+        state = await bot.admin_mark_from_card_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MARK_DATE)
+        self.assertEqual(self.ctx.user_data["mark_book_id"], bid)
+        self.assertNotIn("mark_edit_date", self.ctx.user_data)
+        q.edit_message_text.assert_not_called()
+        q.message.reply_text.assert_called_once()
+        self.assertIn("discussion date", q.message.reply_text.call_args[0][0])
+        markup = q.message.reply_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn(bot.CONV_CANCEL, data)
+
+    async def test_admin_mark_from_card_rejects_discussed(self):
+        bid = self._add_book("Already")
+        bot.db_mark_discussed(bid, "2026-01-01")
+        q = self._callback_query(f"mark_discussed:{bid}")
+        state = await bot.admin_mark_from_card_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertNotIn("mark_book_id", self.ctx.user_data)
+        self.assertTrue(q.answer.call_args.kwargs["show_alert"])
+
     async def test_admin_mark_pick_advances_to_date(self):
         bid = self._add_book("Discuss Me")
         q = self._callback_query(f"admin_mark_pick:{bid}")
@@ -2871,6 +2940,43 @@ class TestGroupVoteCard(BotHandlerTestCase):
         self.assertIn("Добавлено", text)
         self.assertNotIn("Added on", text)
 
+    async def test_private_vote_keeps_mark_discussed_for_admin(self):
+        bid = self._add_book()
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [self.update.effective_user.id]
+            q = self._vote_in("private", bid)
+            await bot.vote_cast_cb(self.update, self.ctx)
+        finally:
+            cfg.ADMIN_IDS = old
+        callbacks = [
+            button.callback_data
+            for row in q.edit_message_text.call_args.kwargs[
+                "reply_markup"
+            ].inline_keyboard
+            for button in row
+        ]
+        self.assertIn(f"mark_discussed:{bid}", callbacks)
+
+    async def test_group_vote_omits_mark_discussed_even_for_admin(self):
+        bid = self._add_book()
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [self.update.effective_user.id]
+            q = self._vote_in("supergroup", bid)
+            with patch.object(cfg, "CHAT_LANG", "en"):
+                await bot.vote_cast_cb(self.update, self.ctx)
+        finally:
+            cfg.ADMIN_IDS = old
+        callbacks = [
+            button.callback_data
+            for row in q.edit_message_text.call_args.kwargs[
+                "reply_markup"
+            ].inline_keyboard
+            for button in row
+        ]
+        self.assertFalse(any(cb.startswith("mark_discussed:") for cb in callbacks))
+
     async def test_private_card_still_shows_personal_vote(self):
         bid = self._add_book()
         q = self._vote_in("private", bid)
@@ -2957,6 +3063,15 @@ class TestAdminCallbackGuards(BotHandlerTestCase):
         self._callback_query(f"admin_hide_pick:{bid}")
         await bot.admin_hide_pick_cb(self.update, self.ctx)
         self.assertEqual(bot.db_get_book(bid)["hidden"], 0)
+
+    async def test_admin_mark_from_card_rejects_non_admin(self):
+        bid = bot.db_add_book("M", "A", 1, 1, "", "", 999, "u", "u")
+        q = self._callback_query(f"mark_discussed:{bid}")
+        result = await bot.admin_mark_from_card_cb(self.update, self.ctx)
+        self.assertEqual(result, ConversationHandler.END)
+        self.assertNotIn("mark_book_id", self.ctx.user_data)
+        self.assertIn("admins only", q.answer.call_args[0][0])
+        self.assertEqual(bot.db_get_book(bid)["discussed"], 0)
 
     async def test_admin_mark_date_handler_rejects_non_admin(self):
         bid = bot.db_add_book("M", "A", 1, 1, "", "", 999, "u", "u")
