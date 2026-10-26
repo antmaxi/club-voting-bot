@@ -2276,6 +2276,26 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(job_ctx.bot.send_message.call_count, 2)
         self.assertIn(call(1.0), sleep.await_args_list)
 
+    async def test_admin_notify_pick_orders_by_current_rating(self):
+        older_high = self._add_book("Older High")
+        bot.db_cast_vote(10, older_high, 1)
+        discussed_low = self._add_book("Discussed Low")
+        bot.db_mark_discussed(discussed_low, "2020-01-01")
+        bot.db_cast_vote(11, discussed_low, -1)
+        self._add_book("Newer Zero")
+
+        q = self._callback_query("admin:notify_pick")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+
+        self.assertEqual(state, bot.ADMIN_NOTIFY_PICK)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        labels = [btn.text for row in markup.inline_keyboard for btn in row]
+        high_idx = next(i for i, label in enumerate(labels) if "Older High" in label)
+        zero_idx = next(i for i, label in enumerate(labels) if "Newer Zero" in label)
+        low_idx = next(i for i, label in enumerate(labels) if "Discussed Low" in label)
+        self.assertLess(high_idx, zero_idx)
+        self.assertLess(zero_idx, low_idx)
+
     async def test_admin_notify_pick_toggle_updates_selection(self):
         bid = self._add_book("Toggle Book")
         q = self._callback_query(f"admin_notify_pick:toggle:{bid}:0")

@@ -412,7 +412,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "notify":
         return await admin_notify_top_cb(update, ctx)
     elif data == "notify_pick":
-        books = _admin_all_books()
+        books = _admin_notify_books()
         if not books:
             await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
             return ConversationHandler.END
@@ -430,7 +430,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "notify_chat":
         return await admin_notify_chat_top_cb(update, ctx)
     elif data == "notify_chat_pick":
-        books = _admin_all_books()
+        books = _admin_notify_books()
         if not books:
             await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
             return ConversationHandler.END
@@ -552,7 +552,7 @@ async def _admin_notify_books_pick_cb(
     await query.answer()
     lang = get_lang(ctx)
     prefix = "admin_notify_chat_pick" if to_chat else "admin_notify_pick"
-    books = _admin_all_books()
+    books = _admin_notify_books()
     parts = query.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
@@ -1064,6 +1064,27 @@ def _admin_all_books() -> list[sqlite3.Row]:
     return list(db_get_books_metadata(discussed=False, include_hidden=True)) + list(
         db_get_books_metadata(discussed=True, include_hidden=True)
     )
+
+
+def _admin_notify_books() -> list[sqlite3.Row]:
+    """Every entry for reminder pickers, highest current rating first.
+
+    Covers the configured club entity (books, films, and the rest): they share
+    one table, and the score is the same live total the voting list uses.
+    """
+    books = list(db_get_books(discussed=False, include_hidden=True)) + list(
+        db_get_books(discussed=True, include_hidden=True)
+    )
+    books.sort(
+        key=lambda book: (
+            float(book["avg_score"]),
+            int(book["vote_count"]),
+            str(book["added_at"]),
+            int(book["id"]),
+        ),
+        reverse=True,
+    )
+    return books
 
 
 async def admin_unhide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
