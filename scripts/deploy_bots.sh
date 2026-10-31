@@ -213,14 +213,12 @@ deploy_repo() {
     local repo="$1"
     local name; name="$(basename "$repo")"
 
-    # Compose runs as the operator uid/gid so host bind mounts stay writable.
+    # Best-effort on the host. The container entrypoint chowns these mounts
+    # as root on every start, so a rebuild does not depend on this succeeding.
     mkdir -p -- "$repo/data" "$repo/logs"
     if ! chown -R --no-dereference "$BOT_UID:$BOT_GID" -- "$repo/data" "$repo/logs" \
         || ! chmod 700 -- "$repo/data" "$repo/logs"; then
-        log "[$name] FAILED — could not make data/logs writable by uid $BOT_UID"
-        log "[$name] Try: sudo chown -R $BOT_UID:$BOT_GID -- $repo/data $repo/logs"
-        echo "failed|$name (permission preparation failed)" >"$DEPLOY_RESULT_DIR/$name"
-        return
+        log "[$name] Could not chown data/logs on the host; container startup will fix ownership"
     fi
 
     log "[$name] Stopping containers..."

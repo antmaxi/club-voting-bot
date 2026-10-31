@@ -174,12 +174,10 @@ To move one entry between instances (e.g. after spinning up a new bot or merging
    docker compose up -d --build
    ```
 
-   Compose runs the container as uid `1000` by default so host-owned `data/` and `logs/` stay writable. If your login is not `1000:1000`, or those folders were previously chowned to `10001`, fix ownership once:
+   On startup the container corrects ownership of `./data` and `./logs` to uid/gid `1000`, then drops privileges and runs the bot as that user. A rebuild does not need a manual `chown`. If your login is not `1000:1000` and those folders should stay owned by you:
 
    ```bash
-   export BOT_UID="$(id -u)" BOT_GID="$(id -g)"
-   sudo chown -R "$BOT_UID:$BOT_GID" data logs
-   docker compose up -d --build
+   BOT_UID="$(id -u)" BOT_GID="$(id -g)" docker compose up -d --build
    ```
 
 (if not yet installed before, install docker as in https://docs.docker.com/engine/install/ubuntu/)

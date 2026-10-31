@@ -26,13 +26,17 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-cursor.txt \
 # Copy the application code into the container
 COPY --chown=10001:10001 bookclub/ ./bookclub/
 COPY --chown=10001:10001 bookclub_bot.py .
+# setpriv is util-linux, already in the Debian slim base. Compose starts as
+# root; this script chowns the data/log mounts and drops to BOT_UID:BOT_GID.
+COPY --chmod=755 scripts/docker_entrypoint.sh /app/docker_entrypoint.sh
 
-# Run the application as a dedicated non-root uid/gid.
+# Fallback user when the image is run without Compose. Compose itself starts
+# as root so the entrypoint can fix bind-mount ownership, then drops privileges.
 RUN groupadd --gid 10001 bot \
     && useradd --uid 10001 --gid bot --no-create-home --shell /usr/sbin/nologin bot \
     && mkdir -p /app/data /app/logs \
     && chown -R bot:bot /app
 USER bot
 
-# Command to run the bot
+ENTRYPOINT ["/app/docker_entrypoint.sh"]
 CMD ["python", "bookclub_bot.py"]

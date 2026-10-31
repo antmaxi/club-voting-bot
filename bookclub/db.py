@@ -116,9 +116,8 @@ def _ensure_db_writable() -> None:
         raise SystemExit(
             f"Cannot write the database at {db_path}: {exc}\n"
             "The data directory must be writable by the process user. "
-            "For Docker bind mounts, own the host folders:\n"
-            '  export BOT_UID="$(id -u)" BOT_GID="$(id -g)"\n'
-            '  sudo chown -R "$BOT_UID:$BOT_GID" data logs'
+            "Docker fixes ownership of data/ and logs/ on startup; "
+            "if this persists, check that those folders are mounted read-write."
         ) from exc
 
 

@@ -2,12 +2,25 @@ services:
   bot:
     build: .
     init: true
-    # Bind-mounted ./data and ./logs are owned by the host user. Override
-    # BOT_UID/BOT_GID if that login is not 1000:1000.
-    user: "${BOT_UID:-1000}:${BOT_GID:-1000}"
+    # Root only so docker_entrypoint.sh can chown the bind mounts. It then
+    # drops to BOT_UID:BOT_GID (default 1000:1000) and clears capabilities.
+    # The added caps are only what that ownership fix needs; the bot process
+    # keeps none of them.
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+      - FOWNER
+      - SETUID
+      - SETGID
+      - SETPCAP
     env_file:
       - .env
     environment:
+      - BOT_UID=${BOT_UID:-1000}
+      - BOT_GID=${BOT_GID:-1000}
       - DB_PATH=/app/data/bookclub.db
       - PERSISTENCE_PATH=/app/data/bot_persistence
       - ACTIVITY_PATH=/app/data/last_activity.json
@@ -20,6 +33,4 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    cap_drop:
-      - ALL
     restart: always
