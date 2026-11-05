@@ -1195,10 +1195,11 @@ class TestUtils(unittest.TestCase):
             title="Dune",
             author="Herbert",
             avg_score=2.5,
+            vote_count=3,
             creation_year=1965,
         )
         line = bot.book_compact_line(1, book)
-        self.assertEqual(line, "1. <b>2.5</b> <b>Dune</b> — Herbert (1965)")
+        self.assertEqual(line, "1. <b>2.5/3</b> <b>Dune</b> — Herbert (1965)")
         score_pos = line.index("2.5")
         title_pos = line.index("Dune")
         self.assertLess(score_pos, title_pos)
@@ -1206,7 +1207,7 @@ class TestUtils(unittest.TestCase):
     def test_book_compact_line_zero_score_and_no_year(self):
         book = make_book(title="Untitled", author="Anon", avg_score=0)
         line = bot.book_compact_line(3, book)
-        self.assertEqual(line, "3. <b>0</b> <b>Untitled</b> — Anon")
+        self.assertEqual(line, "3. <b>0/0</b> <b>Untitled</b> — Anon")
 
     def test_book_compact_line_escapes_html(self):
         book = make_book(title="A <B>", author="X & Y", avg_score=1)
@@ -1223,7 +1224,7 @@ class TestUtils(unittest.TestCase):
             "<b>A &amp; B</b></a> — X",
             line,
         )
-        self.assertIn("<b>1</b>", line)
+        self.assertIn("<b>1/0</b>", line)
 
     def test_compact_book_list_lines_matches_list_header_and_rows(self):
         books = [

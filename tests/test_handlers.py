@@ -567,8 +567,8 @@ class TestList(BotHandlerTestCase):
         self.assertIn("(2001)", text)
         self.assertIn("Beta", text)
         self.assertIn("Author B", text)
-        self.assertIn("<b>2</b> <b>Alpha</b>", text)
-        self.assertIn("<b>0</b> <b>Beta</b>", text)
+        self.assertIn("<b>2/2</b> <b>Alpha</b>", text)
+        self.assertIn("<b>0/0</b> <b>Beta</b>", text)
 
     async def test_list_choice_compact_titles_link_to_private_vote_card(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
@@ -2550,8 +2550,8 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertIn("Author A", text)
         self.assertIn("(2001)", text)
         self.assertIn("Beta", text)
-        self.assertIn("<b>2</b> <b>Alpha</b>", text)
-        self.assertIn("<b>0</b> <b>Beta</b>", text)
+        self.assertIn("<b>2/2</b> <b>Alpha</b>", text)
+        self.assertIn("<b>0/0</b> <b>Beta</b>", text)
 
     async def test_admin_toggle_votes_compact_list_uses_new_counting_mode(self):
         book_id = self._add_book("Alpha")
@@ -2567,8 +2567,8 @@ class TestAdminConsole(BotHandlerTestCase):
 
         text = self.ctx.bot.send_message.call_args[1]["text"]
         self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 1)
-        self.assertIn("<b>1</b> <b>Alpha</b>", text)
-        self.assertNotIn("<b>2</b> <b>Alpha</b>", text)
+        self.assertIn("<b>1/1</b> <b>Alpha</b>", text)
+        self.assertNotIn("<b>2/2</b> <b>Alpha</b>", text)
         self.assertNotIn("Discussed", text)
 
     async def test_admin_toggle_votes_skips_compact_list_when_no_books(self):

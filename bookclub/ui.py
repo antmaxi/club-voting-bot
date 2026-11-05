@@ -555,7 +555,7 @@ def book_compact_line(
         else ""
     )
     author_part = f" — {h(book['author'])}" if entry_field_enabled("author") else ""
-    score_fmt = f"{book['avg_score']:g}"
+    score_fmt = f"{book['avg_score']:g}/{int(book['vote_count'])}"
     if bot_username_for_links(bot_username):
         title = linked_book_title(str(book["title"]), int(book["id"]), bot_username)
     else:
