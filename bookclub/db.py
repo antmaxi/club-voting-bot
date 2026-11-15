@@ -621,6 +621,66 @@ def db_get_books(
         ).fetchall()
 
 
+def db_search_books(query: str) -> list[sqlite3.Row]:
+    """Literal Unicode-caseless title/author search over visible entries."""
+    needle = query.strip().casefold()
+    if not needle:
+        return []
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.create_function("casefold", 1, lambda value: str(value or "").casefold())
+        rows = conn.execute(
+            _books_query(
+                "WHERE b.hidden = 0 AND (instr(casefold(b.title), ?) > 0 "
+                "OR instr(casefold(b.author), ?) > 0)"
+            ),
+            (needle, needle),
+        ).fetchall()
+    return sorted(
+        rows, key=lambda row: (row["discussed"], row["title"].casefold(), row["id"])
+    )
+
+
+def db_user_voting_stats() -> tuple[list[sqlite3.Row], int]:
+    """Participation counts, independent of attendance-based ranking eligibility."""
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            WITH users AS (
+                SELECT user_id FROM club_users WHERE user_id > 0
+                UNION SELECT user_id FROM votes WHERE user_id > 0
+            )
+            SELECT u.user_id, cu.full_name, cu.username,
+                   COUNT(DISTINCT CASE WHEN b.hidden = 0 AND b.discussed = 0
+                                       THEN b.id END) AS active_count,
+                   COUNT(DISTINCT b.id) AS total_count
+            FROM users u
+            LEFT JOIN club_users cu ON cu.user_id = u.user_id
+            LEFT JOIN votes v ON v.user_id = u.user_id
+            LEFT JOIN books b ON b.id = v.book_id
+            GROUP BY u.user_id
+        """).fetchall()
+        active_total = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM books WHERE hidden = 0 AND discussed = 0"
+            ).fetchone()[0]
+        )
+    return (
+        sorted(
+            rows,
+            key=lambda row: (
+                -row["active_count"],
+                -row["total_count"],
+                format_club_user_display(
+                    row["user_id"], row["full_name"], row["username"]
+                ).casefold(),
+                row["user_id"],
+            ),
+        ),
+        active_total,
+    )
+
+
 def db_get_books_metadata(
     discussed: bool = False, *, include_hidden: bool = False
 ) -> list[sqlite3.Row]:

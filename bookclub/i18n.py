@@ -249,10 +249,22 @@ def format_ui(lang: str, text: str, **kwargs: Any) -> str:
 
 T: dict[str, dict[str, TranslationValue]] = {
     "en": {
+        "search_prompt": "🔎 Send a title or author to search for, or /cancel.",
+        "search_results": "🔎 Search: <b>{query}</b> — {count} results",
+        "search_empty": "No visible entries found for <b>{query}</b>.",
+        "search_expired": "This result session has expired. Run /search again.",
+        "search_active": "📖 Active",
+        "search_archived": "✅ Archived",
+        "admin_stats_btn": "📊 Statistics",
+        "admin_stats_title": "📊 Voting statistics · Active entries: {active}",
+        "admin_stats_help": "Active: visible, undiscussed entries voted on. Total: all retained entries voted on, including hidden and archived entries. All vote choices count, regardless of attendance eligibility.",
+        "admin_stats_empty": "No known users or voters yet.",
+        "admin_stats_row": "{name} — Active: {active} · Total: {total}",
+        "admin_stats_back": "⬅️ Back to admin console",
         "welcome": (
             "{card_icon} <b>Welcome to the {club_name}!</b>\n\n"
             "➕ /add — Add a {sg}\n"
-            "📋 /list_and_vote — See all {pl}\n"
+            "📋 /list_and_vote — See all {pl}\n🔎 /search — Search by title or author/director\n"
             "🏆 /top — Top rated {pl}\n"
             "⚙️ /settings — Settings\n"
             "ℹ️ /info — About the bot\n"
@@ -581,10 +593,22 @@ T: dict[str, dict[str, TranslationValue]] = {
         ),
     },
     "ru": {
+        "search_prompt": "🔎 Введите название или автора для поиска, либо /cancel.",
+        "search_results": "🔎 Поиск: <b>{query}</b> — найдено: {count}",
+        "search_empty": "По запросу <b>{query}</b> нет доступных записей.",
+        "search_expired": "Результаты поиска устарели. Выполните /search снова.",
+        "search_active": "📖 В списке голосования",
+        "search_archived": "✅ В архиве",
+        "admin_stats_btn": "📊 Статистика",
+        "admin_stats_title": "📊 Статистика голосования · Доступных записей: {active}",
+        "admin_stats_help": "Активные: доступные необсуждённые записи, за которые пользователь голосовал. Всего: все сохранённые записи с его голосами, включая скрытые и архивные. Учитываются все варианты голосов независимо от посещаемости.",
+        "admin_stats_empty": "Пока нет известных пользователей или голосующих.",
+        "admin_stats_row": "{name} — Активные: {active} · Всего: {total}",
+        "admin_stats_back": "⬅️ В админ-панель",
         "welcome": (
             "{card_icon} <b>Добро пожаловать в {club_name}!</b>\n\n"
             "➕ /add — Добавить {acc}\n"
-            "📋 /list_and_vote — Список {gen_pl}\n"
+            "📋 /list_and_vote — Список {gen_pl}\n🔎 /search — Поиск по названию или автору/режиссёру\n"
             "🏆 /top — Топ {gen_pl}\n"
             "⚙️ /settings — Настройки\n"
             "ℹ️ /info — О боте\n"
@@ -915,10 +939,22 @@ T: dict[str, dict[str, TranslationValue]] = {
         ),
     },
     "de": {
+        "search_prompt": "🔎 Sende einen Titel oder Autor für die Suche, oder /cancel.",
+        "search_results": "🔎 Suche: <b>{query}</b> — {count} Ergebnisse",
+        "search_empty": "Keine sichtbaren Einträge für <b>{query}</b> gefunden.",
+        "search_expired": "Diese Ergebnisse sind abgelaufen. Starte /search erneut.",
+        "search_active": "📖 Zur Abstimmung",
+        "search_archived": "✅ Im Archiv",
+        "admin_stats_btn": "📊 Statistik",
+        "admin_stats_title": "📊 Abstimmungsstatistik · Aktive Einträge: {active}",
+        "admin_stats_help": "Aktiv: sichtbare, noch nicht besprochene Einträge mit einer Stimme. Gesamt: alle gespeicherten Einträge mit einer Stimme, auch ausgeblendete und archivierte. Jede Stimmoption zählt, unabhängig von der Teilnahmeberechtigung.",
+        "admin_stats_empty": "Noch keine bekannten Nutzer oder Abstimmenden.",
+        "admin_stats_row": "{name} — Aktiv: {active} · Gesamt: {total}",
+        "admin_stats_back": "⬅️ Zurück zur Admin-Konsole",
         "welcome": (
             "{card_icon} <b>Willkommen beim {club_name}!</b>\n\n"
             "➕ /add — {acc} hinzufügen\n"
-            "📋 /list_and_vote — Alle {pl} anzeigen\n"
+            "📋 /list_and_vote — Alle {pl} anzeigen\n🔎 /search — Nach Titel oder Autor/Regisseur suchen\n"
             "🏆 /top — Bestbewertete {pl}\n"
             "⚙️ /settings — Einstellungen\n"
             "ℹ️ /info — Über den Bot\n"
@@ -1262,6 +1298,7 @@ T: dict[str, dict[str, TranslationValue]] = {
 ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
     "film": {
         "en": {
+            "search_prompt": "🔎 Send a title or director to search for, or /cancel.",
             "ask_pages": "⏱ How long is it (<b>runtime in minutes</b>)? (enter a number)",
             "invalid_pages": "⚠️ Please enter a valid runtime in minutes (e.g. 120):",
             "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
@@ -1277,6 +1314,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "nonfiction_label": "Documentary",
         },
         "ru": {
+            "search_prompt": "🔎 Введите название или режиссёра для поиска, либо /cancel.",
             "ask_pages": "⏱ Сколько <b>минут</b> длится фильм? (введите число)",
             "invalid_pages": "⚠️ Введите корректную длительность в минутах (например, 120):",
             "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
@@ -1294,6 +1332,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "mark_discussed_btn": "📌 Отметить обсуждённым",
         },
         "de": {
+            "search_prompt": "🔎 Sende einen Titel oder Regisseur für die Suche, oder /cancel.",
             "ask_pages": "⏱ Wie lange dauert er (<b>Laufzeit in Minuten</b>)? (Zahl eingeben)",
             "invalid_pages": "⚠️ Bitte eine gültige Laufzeit in Minuten eingeben (z. B. 120):",
             "ask_fiction": "📂 Ist es ein <b>Spielfilm</b> oder ein <b>Dokumentarfilm</b>?",
@@ -1313,6 +1352,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
 
 COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
     "en": [
+        ("search", "🔎 Search {pl}"),
         ("add", "➕ Add a {sg}"),
         ("list_and_vote", "📋 List {pl} & vote inline"),
         ("top", "🏆 Top rated {pl}"),
@@ -1326,6 +1366,7 @@ COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
         ("info", "ℹ️ About the bot"),
     ],
     "ru": [
+        ("search", "🔎 Поиск {gen_pl}"),
         ("add", "➕ Добавить {acc}"),
         ("list_and_vote", "📋 Список {gen_pl} и голосование"),
         ("top", "🏆 Топ {gen_pl}"),
@@ -1339,6 +1380,7 @@ COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
         ("info", "ℹ️ О боте"),
     ],
     "de": [
+        ("search", "🔎 {Pl} suchen"),
         ("add", "➕ {acc} hinzufügen"),
         ("list_and_vote", "📋 {Pl} auflisten & abstimmen"),
         ("top", "🏆 Top-{Pl}"),

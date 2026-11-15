@@ -6,8 +6,10 @@ from typing import Any
 from telegram import Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
+    ContextTypes,
     ConversationHandler,
     InlineQueryHandler,
     MessageHandler,
@@ -16,6 +18,7 @@ from telegram.ext import (
     filters,
 )
 
+import bookclub.config as config
 from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
@@ -110,11 +113,13 @@ from bookclub.handlers.commands import (
     cmd_help,
     cmd_info,
     cmd_list,
+    cmd_search,
     cmd_settings,
     cmd_start,
     cmd_top,
     list_choice_cb,
     score_calc_cb,
+    search_query_handler,
     settings_choice_cb,
 )
 from bookclub.handlers.edit_delete import (
@@ -235,6 +240,23 @@ def add_flow_states() -> dict[Any, list[Any]]:
     }
 
 
+async def _search_command_dispatch(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> None:
+    raise ApplicationHandlerStop(await cmd_search(update, ctx))
+
+
+async def _search_query_dispatch(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> None:
+    raise ApplicationHandlerStop(await search_query_handler(update, ctx))
+
+
+async def _end_pending_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    # Let the next handler group start the requested interactive flow.
+    return ConversationHandler.END
+
+
 def register_handlers(app: Application) -> None:
     """Attach every handler to the application.
 
@@ -242,7 +264,33 @@ def register_handlers(app: Application) -> None:
     ordering here is subtle enough to be worth asserting on.
     """
     # Gate: silently block users not in the allowed chat (runs before all handlers)
-    app.add_handler(TypeHandler(Update, membership_gate), group=-1)
+    app.add_handler(TypeHandler(Update, membership_gate), group=-2)
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("search", _search_command_dispatch)],
+            states={
+                config.SEARCH_QUERY: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _search_query_dispatch
+                    )
+                ]
+            },
+            fallbacks=[
+                CommandHandler("cancel", conv_cancel),
+                CommandHandler(
+                    ["add", "edit", "delete", "adminconsole"], _end_pending_search
+                ),
+                CallbackQueryHandler(
+                    _end_pending_search, pattern=r"^mark_discussed:\d+$"
+                ),
+            ],
+            allow_reentry=True,
+            name="search",
+            persistent=True,
+        ),
+        group=-1,
+    )
 
     app.add_handler(
         ConversationHandler(

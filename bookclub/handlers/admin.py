@@ -46,6 +46,7 @@ from bookclub.db import (
     db_set_discussed_at,
     db_set_hidden,
     db_upsert_club_user,
+    db_user_voting_stats,
     find_similar_book_titles,
     format_club_user_display,
     parse_book_import,
@@ -308,6 +309,11 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
                     tr(ctx, "admin_import_btn"), callback_data="admin:import"
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_stats_btn"), callback_data="admin:stats:0"
+                )
+            ],
             [cancel_button(get_lang(ctx))],
         ]
     )
@@ -320,6 +326,53 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     return ADMIN_MENU
 
 
+async def _show_voting_stats(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, page: int
+) -> int:
+    users, active_total = db_user_voting_stats()
+    pages = max(1, (len(users) + 9) // 10)
+    page = max(0, min(page, pages - 1))
+    lines = [
+        tr(ctx, "admin_stats_title", active=active_total),
+        tr(ctx, "admin_stats_help"),
+    ]
+    if not users:
+        lines.append(tr(ctx, "admin_stats_empty"))
+    for row in users[page * 10 : (page + 1) * 10]:
+        name = format_club_user_display(
+            row["user_id"], row["full_name"], row["username"]
+        )
+        name = " ".join(name.split())
+        if len(name) > 80:
+            name = name[:79] + "…"
+        lines.append(
+            tr(
+                ctx,
+                "admin_stats_row",
+                name=h(name),
+                active=row["active_count"],
+                total=row["total_count"],
+            )
+        )
+    lines.append(f"{page + 1}/{pages}")
+    nav = []
+    if page:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"admin:stats:{page - 1}"))
+    if page + 1 < pages:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"admin:stats:{page + 1}"))
+    keyboard = ([nav] if nav else []) + [
+        [
+            InlineKeyboardButton(
+                tr(ctx, "admin_stats_back"), callback_data="admin:stats_back"
+            )
+        ]
+    ]
+    await update.callback_query.edit_message_text(
+        "\n\n".join(lines), parse_mode=PM, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ADMIN_MENU
+
+
 async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
@@ -327,6 +380,12 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     data = query.data.split(":")[1]
 
+    if data == "stats":
+        parts = query.data.split(":")
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        return await _show_voting_stats(update, ctx, page)
+    if data == "stats_back":
+        return await cmd_admin_console(update, ctx)
     if data == "mark":
         keyboard = InlineKeyboardMarkup(
             [
