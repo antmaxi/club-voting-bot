@@ -16,6 +16,7 @@ from telegram.ext import (
     filters,
 )
 
+import bookclub.config as config
 from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
@@ -110,11 +111,13 @@ from bookclub.handlers.commands import (
     cmd_help,
     cmd_info,
     cmd_list,
+    cmd_search,
     cmd_settings,
     cmd_start,
     cmd_top,
     list_choice_cb,
     score_calc_cb,
+    search_query_handler,
     settings_choice_cb,
 )
 from bookclub.handlers.edit_delete import (
@@ -243,6 +246,23 @@ def register_handlers(app: Application) -> None:
     """
     # Gate: silently block users not in the allowed chat (runs before all handlers)
     app.add_handler(TypeHandler(Update, membership_gate), group=-1)
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("search", cmd_search)],
+            states={
+                config.SEARCH_QUERY: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, search_query_handler
+                    )
+                ]
+            },
+            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            allow_reentry=True,
+            name="search",
+            persistent=True,
+        )
+    )
 
     app.add_handler(
         ConversationHandler(

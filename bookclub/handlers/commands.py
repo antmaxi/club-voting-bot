@@ -13,7 +13,7 @@ from telegram import (
     InlineKeyboardMarkup,
     Update,
 )
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
 from bookclub.db import (
@@ -22,6 +22,7 @@ from bookclub.db import (
     db_get_books,
     db_get_user_setting,
     db_get_user_vote,
+    db_search_books,
     db_set_user_setting,
     db_votes_use_attendance,
 )
@@ -123,10 +124,16 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     sessions = ctx.user_data.get("_book_page_sessions", {})
     session = sessions.get(token) if isinstance(sessions, dict) else None
     if not isinstance(session, dict):
-        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        await query.edit_message_text(tr(ctx, "search_expired"), parse_mode=PM)
         return
     scope = str(session.get("scope"))
     book_ids = session.get("book_ids")
+    if scope == "search" and not book_ids:
+        await query.edit_message_text(
+            tr(ctx, "search_empty", query=h(session.get("query", "")[:200])),
+            parse_mode=PM,
+        )
+        return
     if not isinstance(book_ids, list) or not book_ids:
         await query.edit_message_text(
             tr(ctx, "no_discussed" if scope == "discussed" else "no_undiscussed"),
@@ -135,18 +142,18 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     index = max(0, min(int(raw_index), len(book_ids) - 1))
     book = db_get_book(int(book_ids[index]))
-    if book is None:
+    while book is None or (scope == "search" and book["hidden"]):
         book_ids.pop(index)
         if not book_ids:
-            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            key = "search_empty" if scope == "search" else "no_undiscussed"
+            await query.edit_message_text(
+                tr(ctx, key, query=h(session.get("query", ""))), parse_mode=PM
+            )
             return
         index = min(index, len(book_ids) - 1)
         book = db_get_book(int(book_ids[index]))
-    if book is None:
-        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
-        return
     lang = get_lang(ctx)
-    show_votes = scope != "discussed"
+    show_votes = scope != "discussed" and not book["discussed"] and not book["hidden"]
     user_vote = (
         None
         if not show_votes
@@ -158,7 +165,11 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         else tr(ctx, "list_compact_title", count=len(book_ids))
     )
     await query.edit_message_text(
-        f"{header}\n\n{book_card(book, lang, user_vote=user_vote)}",
+        (
+            _search_card_text(ctx, session, book, user_vote)
+            if scope == "search"
+            else f"{header}\n\n{book_card(book, lang, user_vote=user_vote)}"
+        ),
         parse_mode=PM,
         reply_markup=_book_page_markup(
             token,
@@ -170,6 +181,71 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             for_admin=show_votes and is_admin(query.from_user.id),
         ),
     )
+
+
+def _search_card_text(
+    ctx: ContextTypes.DEFAULT_TYPE, session: dict, book: BookLike, user_vote: int | None
+) -> str:
+    header = tr(
+        ctx,
+        "search_results",
+        query=h(session["query"][:200]),
+        count=len(session["book_ids"]),
+    )
+    status = tr(ctx, "search_archived" if book["discussed"] else "search_active")
+    return (
+        f"{header}\n{status}\n\n{book_card(book, get_lang(ctx), user_vote=user_vote)}"
+    )
+
+
+async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = " ".join(ctx.args or []).strip()
+    if not query:
+        await update.message.reply_text(tr(ctx, "search_prompt"), parse_mode=PM)
+        return config.SEARCH_QUERY
+    return await _send_search_results(update, ctx, query)
+
+
+async def search_query_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = (update.message.text or "").strip()
+    if not query:
+        await update.message.reply_text(tr(ctx, "search_prompt"), parse_mode=PM)
+        return config.SEARCH_QUERY
+    return await _send_search_results(update, ctx, query)
+
+
+async def _send_search_results(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, query: str
+) -> int:
+    books = db_search_books(query)
+    if not books:
+        await update.message.reply_text(
+            tr(ctx, "search_empty", query=h(query)), parse_mode=PM
+        )
+        return ConversationHandler.END
+    token = _new_book_page_session(ctx, "search", books)
+    session = ctx.user_data["_book_page_sessions"][token]
+    session["query"] = query
+    book = books[0]
+    votable = not book["discussed"]
+    uv = (
+        db_get_user_vote(update.effective_user.id, int(book["id"])) if votable else None
+    )
+    await update.message.reply_text(
+        _search_card_text(ctx, session, book, uv),
+        parse_mode=PM,
+        disable_web_page_preview=True,
+        reply_markup=_book_page_markup(
+            token,
+            0,
+            len(books),
+            book_id=int(book["id"]) if votable else None,
+            lang=get_lang(ctx),
+            user_vote=uv,
+            for_admin=votable and is_admin(update.effective_user.id),
+        ),
+    )
+    return ConversationHandler.END
 
 
 def _settings_keyboard(ctx: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:

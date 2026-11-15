@@ -8,6 +8,8 @@ A Telegram bot (English / Russian / German) for club voting: members add entries
 
 How the code is structured: [Architecture](docs/architecture.md).
 
+Possible next improvements for the book and film bots: [Improvement ideas](docs/improvement-ideas.md).
+
 ## 🌟 Features
 
 - **Languages:** Switch between English, Russian, and German in the `/settings` menu.
@@ -36,6 +38,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 - `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand. Before the book is saved, the bot shows the full entry so you can go back and edit a field. **Save** keeps an unfinished draft; `/add` can continue a saved draft.
 - `/list_and_vote`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
+- `/search Tolkien`: Search visible active and archived entries by title or author (director for films). `/search` alone asks for a query; `/cancel` exits. Search ignores case and treats `%` and `_` literally. Active results support voting.
 - `/settings`: Change your notification and language preferences.
 - `/edit`: Edit a book's details (limited to book owner or admins).
 - `/delete`: Delete a book (limited to book owner or admins).
@@ -44,6 +47,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 
 ### Admin Commands
 - `/adminconsole`: Centralized panel for admins to:
+  - **Statistics:** View each known user’s voting participation: **Active** counts visible, undiscussed entries they voted on; **Total** includes all retained entries, including hidden and archived ones. All vote choices count equally, regardless of attendance eligibility.
   - **Mark discussed:** Mark a book as discussed and move it to the archive.
   - **Hide books:** Temporarily hide books from the `/list_and_vote` and `/top` without deleting them.
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
