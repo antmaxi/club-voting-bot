@@ -1263,6 +1263,7 @@ def score_keyboard(
     current: int | None = None,
     *,
     for_admin: bool = False,
+    search_session: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Compact vote row to attach directly to book cards.
 
@@ -1277,7 +1278,8 @@ def score_keyboard(
         [
             InlineKeyboardButton(
                 label + (" ✓" if current == score else ""),
-                callback_data=f"vote_cast:{book_id}:{score}",
+                callback_data=f"vote_cast:{book_id}:{score}"
+                + (f":{search_session}" if search_session else ""),
             )
             for score, label in options
         ]

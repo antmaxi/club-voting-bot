@@ -109,7 +109,7 @@ Supporting lookup tables: `cefr.py`, `original_languages.py`. Tests import the s
 
 ## Update pipeline
 
-Every Telegram update hits this stack. `membership_gate` runs in handler group `-1`, before conversations and commands.
+Every Telegram update hits this stack. `membership_gate` runs in handler group `-2`, before conversations and commands. The search conversation runs in group `-1`: search input stops further dispatch, while switching to another interactive command ends search and lets group `0` start that flow.
 
 ```mermaid
 sequenceDiagram

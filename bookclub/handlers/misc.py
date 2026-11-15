@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 import bookclub.config as config
 from bookclub.db import db_book_is_votable, db_cast_vote, db_upsert_club_user
 from bookclub.domain import is_admin, require_book
+from bookclub.handlers.commands import _search_card_text
 from bookclub.i18n import PM, get_lang, s, tr, vote_label_text
 from bookclub.logging_setup import logger
 from bookclub.ui import book_card, score_keyboard
@@ -18,11 +19,12 @@ def _score_markup_with_navigation(
     user_vote: int | None = None,
     *,
     for_admin: bool = False,
+    search_session: str | None = None,
 ) -> InlineKeyboardMarkup:
     rows = [
         list(row)
         for row in score_keyboard(
-            book_id, lang, user_vote, for_admin=for_admin
+            book_id, lang, user_vote, for_admin=for_admin, search_session=search_session
         ).inline_keyboard
     ]
     message = getattr(query, "message", None)
@@ -60,7 +62,8 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     query = update.callback_query
     lang = get_lang(ctx)
-    _, book_id, score = query.data.split(":")
+    _, book_id, score, *search_tokens = query.data.split(":")
+    search_token = search_tokens[0] if search_tokens else None
     if book_id == "cancel":
         await query.answer()
         await query.edit_message_text(s(lang, "cancelled"))
@@ -87,6 +90,23 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     book = require_book(book_id)
     uv = score
+    sessions = ctx.user_data.get("_book_page_sessions", {})
+    session = (
+        sessions.get(search_token)
+        if search_token and isinstance(sessions, dict)
+        else None
+    )
+    if session is None and search_token:
+        chat_sessions = ctx.chat_data.get("_search_page_sessions", {})
+        session = (
+            chat_sessions.get(search_token) if isinstance(chat_sessions, dict) else None
+        )
+    if (
+        not isinstance(session, dict)
+        or session.get("scope") != "search"
+        or book_id not in session.get("book_ids", [])
+    ):
+        session = None
 
     chat = update.effective_chat
 
@@ -121,8 +141,14 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer(tr(config.CHAT_LANG, "vote_registered", label=vote_label))
 
         # Build the message content with fresh statistics
-        new_text = book_card(book, config.CHAT_LANG)
-        new_markup = _score_markup_with_navigation(query, book_id, config.CHAT_LANG)
+        new_text = (
+            _search_card_text(ctx, session, book, None, lang=config.CHAT_LANG)
+            if session
+            else book_card(book, config.CHAT_LANG)
+        )
+        new_markup = _score_markup_with_navigation(
+            query, book_id, config.CHAT_LANG, search_session=search_token
+        )
 
         # Attempt to update — on race condition, fetch fresh data and retry once
         max_retries = 2
@@ -143,9 +169,18 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                             f"refetching book {book_id}..."
                         )
                         book = require_book(book_id)  # Fresh aggregates
-                        new_text = book_card(book, config.CHAT_LANG)
+                        new_text = (
+                            _search_card_text(
+                                ctx, session, book, None, lang=config.CHAT_LANG
+                            )
+                            if session
+                            else book_card(book, config.CHAT_LANG)
+                        )
                         new_markup = _score_markup_with_navigation(
-                            query, book_id, config.CHAT_LANG
+                            query,
+                            book_id,
+                            config.CHAT_LANG,
+                            search_session=search_token,
                         )
                     else:
                         # Final attempt failed — log but don't propagate error
@@ -162,10 +197,19 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Private chat: show individual vote inline (always unique per user)
     try:
         await query.edit_message_text(
-            book_card(book, lang, user_vote=uv),
+            (
+                _search_card_text(ctx, session, book, uv)
+                if session
+                else book_card(book, lang, user_vote=uv)
+            ),
             parse_mode=PM,
             reply_markup=_score_markup_with_navigation(
-                query, book_id, lang, uv, for_admin=is_admin(user_id)
+                query,
+                book_id,
+                lang,
+                uv,
+                for_admin=is_admin(user_id),
+                search_session=search_token,
             ),
         )
     except BadRequest as e:

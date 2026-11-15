@@ -38,7 +38,7 @@ def interaction(catalog):
         effective_chat=SimpleNamespace(id=1, type="private"),
     )
     ctx = SimpleNamespace(
-        args=[], user_data={"lang": "en"}, bot_data={}, bot=AsyncMock()
+        args=[], user_data={"lang": "en"}, chat_data={}, bot_data={}, bot=AsyncMock()
     )
     return update, ctx
 
@@ -151,18 +151,33 @@ async def test_search_navigation_rechecks_entries(interaction, catalog):
 
 
 @pytest.mark.asyncio
-async def test_vote_preserves_search_navigation(interaction, catalog):
+@pytest.mark.parametrize("result_count", [1, 2])
+async def test_vote_preserves_search_navigation(interaction, catalog, result_count):
     update, ctx = interaction
     entry = catalog("Title A")
-    catalog("Title B")
+    if result_count > 1:
+        catalog("Title B")
     ctx.args = ["Title"]
     await commands.cmd_search(update, ctx)
+    original_text = update.message.reply_text.call_args.args[0]
     markup = update.message.reply_text.call_args.kwargs["reply_markup"]
-    query = callback(update, f"vote_cast:{entry}:0", markup)
+    vote_callback = next(
+        c for c in callbacks(markup) if c.startswith(f"vote_cast:{entry}:0")
+    )
+    query = callback(update, vote_callback, markup)
     await misc.vote_cast_cb(update, ctx)
-    assert any(
-        c.startswith("book_page:")
-        for c in callbacks(query.edit_message_text.call_args.kwargs["reply_markup"])
+    text = query.edit_message_text.call_args.args[0]
+    assert text.split("\n\n")[0] == original_text.split("\n\n")[0]
+    refreshed = query.edit_message_text.call_args.kwargs["reply_markup"]
+    assert any(c.startswith("book_page:") for c in callbacks(refreshed)) == (
+        result_count > 1
+    )
+    assert vote_callback in callbacks(refreshed)
+    query.data = vote_callback.replace(":0:", ":1:")
+    await misc.vote_cast_cb(update, ctx)
+    assert (
+        query.edit_message_text.call_args.args[0].split("\n\n")[0]
+        == text.split("\n\n")[0]
     )
 
 
@@ -217,3 +232,98 @@ def test_localized_search_and_wiring():
         assert "search" in dict(COMMAND_SPECS[lang])
         assert "/search" in T[lang]["welcome"]
         assert "search_prompt" in ENTITY_STRING_OVERLAYS["film"][lang]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["x" * 4096, "<&" * 2048])
+async def test_long_empty_search_is_bounded(interaction, query):
+    update, ctx = interaction
+    update.message.text = query
+    await commands.search_query_handler(update, ctx)
+    text = update.message.reply_text.call_args.args[0]
+    assert len(text) < 4096
+    assert commands.h(query[:200]) in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["add", "edit", "delete", "adminconsole"])
+async def test_interactive_command_closes_pending_search(catalog, monkeypatch, command):
+    import importlib
+    from datetime import datetime
+
+    from telegram import Chat, Message, MessageEntity, Update, User
+    from telegram.ext import Application, DictPersistence, ExtBot
+
+    main = importlib.import_module("bookclub.main")
+
+    monkeypatch.setattr(main, "membership_gate", AsyncMock())
+    bot = ExtBot("123:token")
+    bot._bot_user = User(id=123, first_name="Bot", is_bot=True, username="club_bot")
+    app = (
+        Application.builder()
+        .bot(bot)
+        .updater(None)
+        .persistence(DictPersistence())
+        .build()
+    )
+    main.register_handlers(app)
+    app._initialized = True
+    app.user_data[1]["lang"] = "en"
+    monkeypatch.setattr(ExtBot, "send_message", AsyncMock())
+    monkeypatch.setattr(config, "LLM_API_KEY", "")
+    monkeypatch.setattr(config, "LLM_PROVIDER", "chat")
+    catalog("Existing")
+
+    async def send(text):
+        msg = Message(
+            message_id=1,
+            date=datetime.now(),
+            chat=Chat(1, "private"),
+            from_user=User(1, "Admin", False),
+            text=text,
+            entities=(
+                [MessageEntity("bot_command", 0, len(text.split()[0]))]
+                if text.startswith("/")
+                else []
+            ),
+        )
+        msg.set_bot(bot)
+        update = Update(1, message=msg)
+        update.set_bot(bot)
+        await app.process_update(update)
+
+    await send("/search")
+    search = next(h for h in app.handlers[-1] if isinstance(h, ConversationHandler))
+    assert search._conversations[(1, 1)] == config.SEARCH_QUERY
+    await send(f"/{command}")
+    assert (1, 1) not in search._conversations
+    if command == "add":
+        await send("New title")
+        assert app.user_data[1]["new_book"]["title"] == "New title"
+        assert "_book_page_sessions" not in app.user_data[1]
+
+
+@pytest.mark.asyncio
+async def test_other_member_group_vote_retains_search_heading(
+    interaction, catalog, monkeypatch
+):
+    update, ctx = interaction
+    monkeypatch.setattr(config, "CHAT_LANG", "en")
+    update.effective_chat.type = "supergroup"
+    entry = catalog("Title A")
+    ctx.args = ["Title"]
+    await commands.cmd_search(update, ctx)
+    markup = update.message.reply_text.call_args.kwargs["reply_markup"]
+    vote_callback = next(
+        c for c in callbacks(markup) if c.startswith(f"vote_cast:{entry}:0")
+    )
+    update.effective_user = SimpleNamespace(id=2, full_name="Member", username=None)
+    ctx.user_data = {"lang": "de"}
+    query = callback(update, vote_callback, markup)
+    await misc.vote_cast_cb(update, ctx)
+    text = query.edit_message_text.call_args.args[0]
+    assert "Search: <b>Title</b> — 1 results" in text
+    assert "Active" in text
+    assert vote_callback in callbacks(
+        query.edit_message_text.call_args.kwargs["reply_markup"]
+    )

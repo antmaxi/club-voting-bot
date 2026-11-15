@@ -91,12 +91,17 @@ def _book_page_markup(
     lang: str = "ru",
     user_vote: int | None = None,
     for_admin: bool = False,
+    search_session: str | None = None,
 ) -> InlineKeyboardMarkup:
     rows = (
         [
             list(row)
             for row in score_keyboard(
-                book_id, lang, user_vote, for_admin=for_admin
+                book_id,
+                lang,
+                user_vote,
+                for_admin=for_admin,
+                search_session=search_session,
             ).inline_keyboard
         ]
         if book_id is not None
@@ -147,7 +152,7 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not book_ids:
             key = "search_empty" if scope == "search" else "no_undiscussed"
             await query.edit_message_text(
-                tr(ctx, key, query=h(session.get("query", ""))), parse_mode=PM
+                tr(ctx, key, query=h(session.get("query", "")[:200])), parse_mode=PM
             )
             return
         index = min(index, len(book_ids) - 1)
@@ -179,23 +184,28 @@ async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             lang=lang,
             user_vote=user_vote,
             for_admin=show_votes and is_admin(query.from_user.id),
+            search_session=token if scope == "search" else None,
         ),
     )
 
 
 def _search_card_text(
-    ctx: ContextTypes.DEFAULT_TYPE, session: dict, book: BookLike, user_vote: int | None
+    ctx: ContextTypes.DEFAULT_TYPE,
+    session: dict,
+    book: BookLike,
+    user_vote: int | None,
+    *,
+    lang: str | None = None,
 ) -> str:
+    lang = lang or get_lang(ctx)
     header = tr(
-        ctx,
+        lang,
         "search_results",
         query=h(session["query"][:200]),
         count=len(session["book_ids"]),
     )
-    status = tr(ctx, "search_archived" if book["discussed"] else "search_active")
-    return (
-        f"{header}\n{status}\n\n{book_card(book, get_lang(ctx), user_vote=user_vote)}"
-    )
+    status = tr(lang, "search_archived" if book["discussed"] else "search_active")
+    return f"{header}\n{status}\n\n{book_card(book, lang, user_vote=user_vote)}"
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -220,12 +230,17 @@ async def _send_search_results(
     books = db_search_books(query)
     if not books:
         await update.message.reply_text(
-            tr(ctx, "search_empty", query=h(query)), parse_mode=PM
+            tr(ctx, "search_empty", query=h(query[:200])), parse_mode=PM
         )
         return ConversationHandler.END
     token = _new_book_page_session(ctx, "search", books)
     session = ctx.user_data["_book_page_sessions"][token]
     session["query"] = query
+    # Shared-chat votes may come from someone other than the search author.
+    chat_sessions = ctx.chat_data.setdefault("_search_page_sessions", {})
+    chat_sessions[token] = session
+    while len(chat_sessions) > _BOOK_PAGE_SESSION_MAX:
+        chat_sessions.pop(next(iter(chat_sessions)))
     book = books[0]
     votable = not book["discussed"]
     uv = (
@@ -243,6 +258,7 @@ async def _send_search_results(
             lang=get_lang(ctx),
             user_vote=uv,
             for_admin=votable and is_admin(update.effective_user.id),
+            search_session=token,
         ),
     )
     return ConversationHandler.END
