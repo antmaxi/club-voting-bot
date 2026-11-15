@@ -626,7 +626,10 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             meta.append(h(fiction_label))
         if config.entry_field_enabled("pages"):
             meta.append(f"{h(str(book['pages']))} {h(s(lang, 'pages_label'))}")
-        meta.append(f"<b>{h(s(lang, 'score_label'))}: {score_fmt}</b>")
+        meta.append(
+            f"<b>{h(s(lang, 'score_label'))}: {score_fmt}</b> "
+            f"{h(tr(ctx, 'votes_label', n=book['vote_count']))}"
+        )
         title = linked_book_title(str(book["title"]), int(book["id"]), bot_username)
         lines.append(
             f"{i}. {title}{author_part}\n"
