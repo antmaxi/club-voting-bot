@@ -71,6 +71,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot._membership_cache.clear()
         membership._club_user_profiles.clear()
         membership._last_activity_write = None
+        membership._activity_writes.clear()
 
         self.update = MagicMock(spec=Update)
         self.update.callback_query = None  # Explicitly set to None by default
@@ -1872,6 +1873,26 @@ class TestMembershipGate(BotHandlerTestCase):
         self.assertEqual(os.stat(cfg.ACTIVITY_PATH).st_mtime_ns, first_mtime)
         with open(cfg.ACTIVITY_PATH, encoding="utf-8") as activity_file:
             self.assertIn("last_non_admin_activity", json.load(activity_file))
+
+    async def test_activity_categories_preserve_each_other(self):
+        self.update.message.left_chat_member = None
+        self.update.message.new_chat_members = []
+        self.update.effective_user.is_bot = False
+        membership.initialize_activity()
+        with patch.object(cfg, "ADMIN_IDS", [111, 222]):
+            for uid in (111, 222, 333):
+                self.update.effective_user.id = uid
+                await bot.membership_gate(self.update, self.ctx)
+        with open(cfg.ACTIVITY_PATH) as stream:
+            data = json.load(stream)
+        for key in (
+            "started_at",
+            "last_main_admin_activity",
+            "last_other_admin_activity",
+            "last_non_admin_activity",
+        ):
+            self.assertIn(key, data)
+        self.assertEqual(data["version"], 2)
 
     async def test_gate_allows_admin_without_api_call(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111

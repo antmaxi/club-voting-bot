@@ -1,0 +1,15 @@
+[Unit]
+Description=Deploy idle club voting bots
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Override User, WorkingDirectory and ExecStart for your deployment account/clone.
+User=root
+WorkingDirectory=/root/club-voting-bot
+ExecStart=/bin/bash /root/club-voting-bot/scripts/deploy_bots.sh --auto --threshold 10
+TimeoutStartSec=30min
+UMask=0077
+StandardOutput=journal
+StandardError=journal

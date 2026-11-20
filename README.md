@@ -211,34 +211,80 @@ Add a cron job to run the backup daily at 2:00 AM:
 
 ## 🚀 Deploying updates
 
-`scripts/deploy_bots.sh` updates one or more running instances on the server:
-for each configured instance it checks whether anyone has actually been using
-the bot recently and asks for confirmation. After you have decided for every
-instance, selected updates run in parallel: stop containers, pull the latest
-code, and bring them back up rebuilt (`docker compose up -d --build`).
+`scripts/deploy_bots.sh` updates independent Compose instances listed in the
+coordinator clone's `.env`:
 
-The activity check reads `last_non_admin_activity` from the bot's own
-persistence file (`data/bot_persistence`) — the same timestamp
-`membership_gate()` stamps on every non-admin update. Admin activity never
-counts as "in use", so testing the deploy yourself doesn't block the next run.
+```env
+DEPLOY_REPOS="/root/club-voting-bot:/root/philo-club-bot"
+```
 
-1. In the **same clone** you run deploy from, add `DEPLOY_REPOS` to `.env` — colon-separated
-   absolute paths to each bot instance on this server (each folder needs its own
-   `docker-compose.yml`, `.env`, and `data/`):
-   ```env
-   DEPLOY_REPOS="/root/club-voting-bot:/root/philo-club-bot"
-   ```
-   `scripts/deploy_bots.sh` and `scripts/logs.sh` read this via `scripts/load_deploy_repos.sh`.
-2. Run it: `./scripts/deploy_bots.sh`
-   - `--check-only` — report activity status for every instance and exit; changes nothing.
-   - `--yes` — auto-confirm instances with no recent activity; instances that look active are still prompted.
-   - `--skip-active` — combine with `--yes` for unattended/cron use: idle instances are updated, active ones are skipped without prompting.
-   - `--threshold <minutes>` — how recent counts as "active" (default 10).
+Each folder keeps its own token, `.env`, Compose project, `data/`, and `logs/`.
+Paths are canonicalized and deduplicated; per-instance locks protect manual and
+scheduled deployments. Different instances build in parallel.
 
-An instance with uncommitted local changes is always skipped rather than
-pulled over. If `git pull` or the rebuild fails partway through, the script
-tries to bring the previous containers back up rather than leaving the bot
-down, and exits nonzero if anything failed — useful for alerting if run from cron.
+```bash
+./scripts/deploy_bots.sh --check-only
+./scripts/deploy_bots.sh                       # interactive confirmation
+./scripts/deploy_bots.sh --yes --skip-active    # unattended activity gate
+./scripts/deploy_bots.sh --auto --threshold 10  # also leave stopped bots alone
+```
+
+Updates require a clean checkout on `main` that can fast-forward to `origin/main`.
+The script builds while the old container runs, then rechecks activity before
+recreating it. The JSON sidecar `data/last_activity.json` (version 2) tracks
+`started_at`, `last_non_admin_activity`, `last_other_admin_activity`, and
+`last_main_admin_activity` separately. **Only the main admin (first `ADMIN_IDS`
+entry) is excluded** from deployment idleness. Other admins count as users.
+A never-used bot becomes idle after startup grace. The 30-second write throttle
+adds a conservative 30-second margin to the idle threshold. Invalid or legacy
+tracking is UNKNOWN and skipped automatically.
+
+A pending marker in each checkout's Git directory survives failed builds and
+activity deferrals, even after HEAD advances. Success clears it; subsequent
+checks do not rebuild. Container replacement waits up to 60 seconds for running
+status (not Telegram readiness). On replacement failure the previous image is
+used for best-effort recovery; persistent data is never rolled back. Failures
+return nonzero, including when recovery succeeds. Logs include paths and target
+commits in `scripts/deploy_bots.log` and, under systemd, the journal.
+
+### Enable automatic deployment with systemd
+
+First manually deploy this tracker version to every running instance and verify
+that each sidecar has `version: 2` and `started_at`. Legacy sidecars cannot safely
+implement the new admin policy. Confirm every instance uses a distinct Compose
+project name (the folder name is the default); keep existing names unchanged.
+
+Copy the bundled service and timer, then edit the service's `User`,
+`WorkingDirectory`, and `ExecStart` for your deployment account and coordinator
+clone. That account needs Git authentication and Docker access. Use the same
+account as existing deployments so bind-mount ownership stays consistent.
+
+```bash
+sudo cp deploy/systemd/club-voting-bot-deploy.{service,timer} /etc/systemd/system/
+sudoedit /etc/systemd/system/club-voting-bot-deploy.service
+sudo systemd-analyze verify /etc/systemd/system/club-voting-bot-deploy.{service,timer}
+sudo systemctl daemon-reload
+sudo systemctl start club-voting-bot-deploy.service  # review this first run
+sudo systemctl enable --now club-voting-bot-deploy.timer
+systemctl list-timers club-voting-bot-deploy.timer
+journalctl -u club-voting-bot-deploy.service -n 100
+```
+
+The timer checks every two minutes, starting two minutes after boot; a running
+check is not started twice. Busy bots retry automatically without delaying idle
+ones. Multiple pushes are combined into the latest observed main tip. Network
+and build failures retry on later checks. To disable scheduling:
+
+```bash
+sudo systemctl disable --now club-voting-bot-deploy.timer
+```
+
+This does not interrupt an already-running service. For failed replacement,
+inspect the journal and container logs. If recovery failed and the bot is down,
+repair it manually (`docker compose up -d --build` in that instance): `--auto`
+deliberately does not start stopped containers. Leave the pending marker in place
+so the next eligible check verifies a successful deployment. Do not delete bot
+data to resolve a deployment failure.
 
 **Why not Kubernetes?** These bots are single-process, long-polling (no
 inbound HTTP traffic to load-balance), and keep their state in a local SQLite
