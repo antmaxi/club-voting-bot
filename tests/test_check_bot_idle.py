@@ -63,6 +63,30 @@ class TestCheckBotIdle(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("UNKNOWN", result.stdout)
 
+    def test_admin_categories_and_startup_grace(self):
+        old = datetime.now(UTC) - timedelta(hours=1)
+        recent = datetime.now(UTC).isoformat()
+        p = self._tmp_activity(old)
+        data = json.loads(p.read_text())
+        data["last_main_admin_activity"] = recent
+        p.write_text(json.dumps(data))
+        self.assertEqual(self._run(p).returncode, 0)
+        data["last_other_admin_activity"] = recent
+        p.write_text(json.dumps(data))
+        self.assertEqual(self._run(p).returncode, 1)
+        p.write_text(json.dumps({"version": 2, "started_at": recent}))
+        self.assertEqual(self._run(p).returncode, 1)
+
+    def test_legacy_and_future_are_unknown(self):
+        p = self._tmp_activity(datetime.now(UTC) + timedelta(hours=1))
+        self.assertEqual(self._run(p).returncode, 2)
+        p.write_text('{"last_non_admin_activity": "2020-01-01"}')
+        self.assertEqual(self._run(p).returncode, 2)
+
+    def test_write_throttle_margin(self):
+        p = self._tmp_activity(datetime.now(UTC) - timedelta(minutes=5, seconds=10))
+        self.assertEqual(self._run(p).returncode, 1)
+
     def _tmp_activity(self, timestamp: datetime) -> Path:
         import tempfile
 
@@ -70,7 +94,13 @@ class TestCheckBotIdle(unittest.TestCase):
         os.close(fd)
         path = Path(name)
         path.write_text(
-            json.dumps({"last_non_admin_activity": timestamp.isoformat()}),
+            json.dumps(
+                {
+                    "version": 2,
+                    "started_at": timestamp.isoformat(),
+                    "last_non_admin_activity": timestamp.isoformat(),
+                }
+            ),
             encoding="utf-8",
         )
         self.addCleanup(path.unlink, missing_ok=True)

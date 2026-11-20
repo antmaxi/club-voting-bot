@@ -12,6 +12,9 @@ from bookclub.notifications import recover_pending_new_book_notifications
 
 async def bot_notify_startup(app: Application) -> None:
     """Notify first admin that bot has started, and set default command menu."""
+    from bookclub.membership import initialize_activity
+
+    initialize_activity()
     try:
         await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
         await app.bot.set_my_commands(

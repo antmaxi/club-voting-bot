@@ -50,22 +50,29 @@ def _upsert_club_user_if_changed(
         _club_user_profiles.popitem(last=False)
 
 
-def _record_non_admin_activity(ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Persist a throttled, non-executable deployment-idle timestamp."""
+_activity_writes: dict[str, datetime] = {}
+
+
+def initialize_activity() -> None:
+    """Start a new tracking epoch, retaining historical category timestamps."""
     global _last_activity_write
+    _last_activity_write = None
+    _activity_writes.clear()
+    _write_activity("started_at", datetime.now(UTC))
 
-    now = datetime.now(UTC)
-    if (
-        _last_activity_write is not None
-        and (now - _last_activity_write).total_seconds()
-        < ACTIVITY_WRITE_INTERVAL_SECONDS
-    ):
-        return
 
-    ctx.bot_data["last_non_admin_activity"] = now
+def _write_activity(key: str, now: datetime) -> bool:
     activity_path = Path(config.ACTIVITY_PATH)
     tmp_path: Path | None = None
     try:
+        try:
+            data = json.loads(activity_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data.update(version=2)
+        data[key] = now.isoformat()
         activity_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{activity_path.name}.",
@@ -75,19 +82,44 @@ def _record_non_admin_activity(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
         tmp_path = Path(tmp_name)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump({"last_non_admin_activity": now.isoformat()}, stream)
+            json.dump(data, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, activity_path)
-        _last_activity_write = now
+        return True
     except OSError as exc:
         logger.warning(
             "Could not persist activity timestamp to %s: %s", activity_path, exc
         )
+        return False
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
+
+
+def _record_activity(ctx: ContextTypes.DEFAULT_TYPE, key: str) -> None:
+    global _last_activity_write
+    now = datetime.now(UTC)
+    previous = (
+        _last_activity_write
+        if key == "last_non_admin_activity"
+        else _activity_writes.get(key)
+    )
+    if (
+        previous is not None
+        and (now - previous).total_seconds() < ACTIVITY_WRITE_INTERVAL_SECONDS
+    ):
+        return
+    ctx.bot_data[key] = now
+    if _write_activity(key, now):
+        _activity_writes[key] = now
+        if key == "last_non_admin_activity":
+            _last_activity_write = now
+
+
+def _record_non_admin_activity(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    _record_activity(ctx, "last_non_admin_activity")
 
 
 async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -145,8 +177,13 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if await _check_membership(update, ctx):
         user_id = update.effective_user.id if update.effective_user else None
-        if user_id and user_id not in config.ADMIN_IDS:
-            _record_non_admin_activity(ctx)
+        if user_id and update.effective_user.is_bot is not True:
+            if config.ADMIN_IDS and user_id == config.ADMIN_IDS[0]:
+                _record_activity(ctx, "last_main_admin_activity")
+            elif user_id in config.ADMIN_IDS:
+                _record_activity(ctx, "last_other_admin_activity")
+            else:
+                _record_non_admin_activity(ctx)
         if user_id and update.effective_user:
             _upsert_club_user_if_changed(
                 user_id,
